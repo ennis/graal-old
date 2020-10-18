@@ -23,7 +23,14 @@ public:
   /// other virtual resource.
   /// @param other
   /// @return
-  virtual bool is_aliasable_with(const virtual_resource &other) = 0;
+  virtual bool is_aliasable_with(const virtual_resource &other) const = 0;
+
+  /// @brief Allocates a concrete resource.
+  virtual void allocate() = 0;
+  
+  /// @brief 
+  /// @param other 
+  virtual void alias_with(virtual_resource& other) = 0;
 
 private:
   bool discarded_ = false; // no more external references to this resource
@@ -38,7 +45,9 @@ class virtual_image_resource final : public virtual_resource {
 public:
   virtual_image_resource(const image_desc &desc) : desc_{desc} {}
 
-  bool is_aliasable_with(const virtual_resource &other) override;
+  bool is_aliasable_with(const virtual_resource &other) const override;
+  void allocate() override;
+  void alias_with(virtual_resource& other) override;
 
 private:
   image_desc                      desc_;
@@ -46,7 +55,17 @@ private:
 };
 
 /// @brief
-class virtual_buffer_base : public virtual_resource {
+class virtual_buffer_resource : public virtual_resource {
+  friend class queue_impl;
+
+public:
+  virtual_buffer_resource(size_t size) : size_{size} {}
+
+  bool is_aliasable_with(const virtual_resource &other) const override;
+  void allocate() override;
+  void alias_with(virtual_resource& other) override;
+
+
 private:
   size_t size_;
 };

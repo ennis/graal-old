@@ -43,6 +43,7 @@ struct image_desc {
 class image_resource {
 public:
   image_resource(const image_desc &desc);
+  ~image_resource();
 
   [[nodiscard]] GLuint get_gl_object() const { return tex_.get(); }
 

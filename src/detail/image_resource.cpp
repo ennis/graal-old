@@ -8,8 +8,7 @@ namespace detail {
 image_resource::image_resource(const image_desc &desc) : desc_{desc} {
   switch (desc_.type) {
   case image_type::image_1d:
-    tex_ = gl::create_texture_1d(GL_TEXTURE_1D, desc_.format, desc_.size[0],
-                                 desc_.size[1], desc_.num_mipmaps);
+    tex_ = gl::create_texture_1d(GL_TEXTURE_1D, desc_.format, desc_.size[0], desc_.num_mipmaps);
     break;
   case image_type::image_1d_array:
     tex_ =
@@ -47,6 +46,8 @@ image_resource::image_resource(const image_desc &desc) : desc_{desc} {
     break;
   }
 }
+
+image_resource::~image_resource() {}
 
 } // namespace detail
 } // namespace graal

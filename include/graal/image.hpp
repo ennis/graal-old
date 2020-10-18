@@ -6,6 +6,7 @@
 
 #include <graal/detail/image_resource.hpp>
 #include <graal/detail/named_object.hpp>
+#include <graal/detail/task.hpp>
 #include <graal/detail/virtual_resource.hpp>
 #include <graal/errors.hpp>
 #include <graal/gl/texture.hpp>
@@ -160,6 +161,11 @@ public:
     return spec;
   }
 
+  detail::resource_tracker &get_resource_tracker() noexcept { return tracker_; }
+  const detail::resource_tracker &get_resource_tracker() const noexcept {
+    return tracker_;
+  }
+
 protected:
   template <int Dim> size_t has_size() const noexcept { return has_size_[Dim]; }
 
@@ -188,6 +194,7 @@ protected:
   std::optional<image_format> format_;
   std::optional<int>          samples_; // multisample count
   std::optional<int>          mipmaps_; // mipmap count
+  detail::resource_tracker    tracker_;
 };
 
 template <image_type Type, bool ExternalAccess> class image_impl;
@@ -480,6 +487,19 @@ public:
   /// @brief
   /// @param name
   void set_name(std::string name) { impl_->set_name(std::move(name)); }
+
+  /// @brief
+  /// @return
+  [[nodiscard]] detail::resource_tracker &get_resource_tracker() noexcept {
+    return impl_->get_resource_tracker();
+  }
+
+  /// @brief
+  /// @return
+  [[nodiscard]] const detail::resource_tracker &
+  get_resource_tracker() const noexcept  {
+    return impl_->get_resource_tracker();
+  }
 
 private:
   std::shared_ptr<impl_t> impl_;

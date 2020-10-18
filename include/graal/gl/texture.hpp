@@ -12,7 +12,7 @@ using texture_handle = handle<texture_deleter>;
 
 [[nodiscard]] texture_handle create_texture_1d(GLenum       target,
                                                image_format format,
-                                               size_t width, size_t height,
+                                               size_t width,
                                                size_t num_mipmaps);
 
 [[nodiscard]] texture_handle create_texture_2d(GLenum       target,

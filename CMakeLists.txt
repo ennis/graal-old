@@ -9,6 +9,7 @@ find_package(fmt REQUIRED)
 find_package(OpenGL REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)
+find_package(tinyobjloader CONFIG REQUIRED)
 
 set(HEADERS 
 	"include/graal/queue.hpp" 
@@ -31,7 +32,7 @@ set(HEADERS
  "include/graal/access_mode.hpp" 
  "include/graal/target.hpp"
  "include/graal/detail/named_object.hpp"
- "include/graal/image_type.hpp" "include/graal/detail/image_resource.hpp" "include/graal/detail/virtual_resource.hpp")
+ "include/graal/image_type.hpp" "include/graal/detail/image_resource.hpp" "include/graal/detail/virtual_resource.hpp" "include/graal/gl/buffer.hpp" "include/graal/event.hpp" "include/graal/detail/task.hpp")
 
 set(SOURCES
 	"src/queue.cpp" 
@@ -43,7 +44,7 @@ set(SOURCES
 	"src/gl/glad.c"
 	"src/image_format.cpp"  
 	"src/errors.cpp"
-	 "src/gl/debug_output.cpp" "src/detail/image_resource.cpp" "src/detail/virtual_resource.cpp")
+	 "src/gl/debug_output.cpp" "src/detail/image_resource.cpp" "src/detail/virtual_resource.cpp" "src/gl/buffer.cpp")
 
 # Add source to this project's executable.
 add_library (graal STATIC ${SOURCES} ${HEADERS})
@@ -51,12 +52,14 @@ add_library (graal STATIC ${SOURCES} ${HEADERS})
 target_include_directories(graal PRIVATE "src")
 target_include_directories(graal PUBLIC "include")
 #target_compile_features(graal PUBLIC cxx_std_17)
+target_compile_definitions(graal PRIVATE GRAAL_TRACE_RESOURCES)
 target_compile_options(graal PUBLIC /permissive- /std:c++latest)
 target_link_libraries(graal 
 	PUBLIC 
 		fmt::fmt
 		OpenGL::GL
 	)
+
 
 add_executable(graal-test 
 	"tests/imgui_impl_opengl3.cpp"
@@ -67,5 +70,6 @@ add_executable(graal-test
 target_link_libraries(graal-test PRIVATE 
 	graal
 	imgui::imgui
+	tinyobjloader::tinyobjloader
 	glfw)
 

@@ -13,4 +13,5 @@ public:
 private:
   std::string name_;
 };
+
 } // namespace graal::detail

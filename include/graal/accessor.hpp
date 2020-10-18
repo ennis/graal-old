@@ -1,8 +1,8 @@
 #pragma once
 #include <graal/buffer.hpp>
 #include <graal/image.hpp>
-#include <graal/queue.hpp>
 #include <graal/image_type.hpp>
+#include <graal/queue.hpp>
 #include <type_traits>
 
 namespace graal {
@@ -81,19 +81,21 @@ inline constexpr bool is_buffer_target(target target) {
 
 //-----------------------------------------------------
 
-template <typename DataT, image_type Type, target Target, access_mode AccessMode,
-          bool ExternalAccess>
+template <typename DataT, image_type Type, target Target,
+          access_mode AccessMode, bool ExternalAccess>
 class image_accessor;
 
 // image_accessor for virtual images
-template <typename DataT, image_type Type, target Target, access_mode AccessMode>
+template <typename DataT, image_type Type, target Target,
+          access_mode AccessMode>
 class image_accessor<DataT, Type, Target, AccessMode, false> {
   static_assert(is_image_target(Target), "invalid target for image_accessor");
 
 public:
   image_accessor(image<Type, false> &img, scheduler &sched)
       : virt_img_{img.get_virtual_image()} {
-    sched.add_resource_access(virt_img_, AccessMode);
+    sched.add_resource_access(img.get_resource_tracker(), AccessMode,
+                              virt_img_);
   }
 
   /// @brief
@@ -113,12 +115,15 @@ private:
 };
 
 // image_accessor for concrete images
-template <typename DataT, image_type Type, target Target, access_mode AccessMode>
+template <typename DataT, image_type Type, target Target,
+          access_mode AccessMode>
 class image_accessor<DataT, Type, Target, AccessMode, true> {
   static_assert(is_image_target(Target), "invalid target for image_accessor");
 
 public:
-  image_accessor(image<Type, true> &img, scheduler &) : image_{img} {}
+  image_accessor(image<Type, true> &img, scheduler &sched) : image_{img} {
+    sched.add_resource_access(img.get_resource_tracker(), AccessMode);
+  }
 
   /// @brief
   /// @return
@@ -152,39 +157,37 @@ private:
 /// @brief Primary accessor template
 /// @tparam DataT
 template <typename DataT,
-          image_type Type, // image dimensions (1D for buffers)
-          target           Target,     // target
-          access_mode      AccessMode, // access mode (RW/RO/WO)
-          bool ExternalAccess // false if no external access (virtual), true
-                              // otherwise
+          image_type  Type,       // image dimensions (1D for buffers)
+          target      Target,     // target
+          access_mode AccessMode, // access mode (RW/RO/WO)
+          bool ExternalAccess     // false if no external access (virtual), true
+                                  // otherwise
           >
 class accessor {};
 
-// now buffers and images are sufficiently different to warrant two different accessor types?
+// now buffers and images are sufficiently different to warrant two different
+// accessor types?
 
 //-----------------------------------------------------------------------------
 // accessor(sampled_image)
 template <typename DataT, image_type Type, access_mode AccessMode,
           bool ExternalAccess>
-class accessor<DataT, Type, target::sampled_image, AccessMode,
-               ExternalAccess>
+class accessor<DataT, Type, target::sampled_image, AccessMode, ExternalAccess>
     : public detail::image_accessor<DataT, Type, target::sampled_image,
                                     AccessMode, ExternalAccess> {
 public:
-  using base_t =
-      detail::image_accessor<void, Type, target::sampled_image,
-                             AccessMode, ExternalAccess>;
+  using base_t = detail::image_accessor<void, Type, target::sampled_image,
+                                        AccessMode, ExternalAccess>;
 
   accessor(image<Type, ExternalAccess> &image, sampled_image_tag_t,
-           scheduler &                        sched)
+           scheduler &                  sched)
       : base_t{image, sched} {}
 };
 
 //-----------------------------------------------------------------------------
 // accessor<storage_image>
 template <image_type Type, access_mode AccessMode, bool ExternalAccess>
-class accessor<void, Type, target::storage_image, AccessMode,
-               ExternalAccess>
+class accessor<void, Type, target::storage_image, AccessMode, ExternalAccess>
     : public detail::image_accessor<void, Type, target::storage_image,
                                     AccessMode, ExternalAccess> {
 public:
@@ -193,7 +196,7 @@ public:
                              AccessMode, ExternalAccess>;
 
   accessor(image<Type, ExternalAccess> &image, storage_image_tag_t,
-           scheduler &                        sched)
+           scheduler &                  sched)
       : base_t{image, sched} {}
 
   accessor(image<Type, ExternalAccess> &image, storage_image_tag_t,
@@ -206,9 +209,8 @@ public:
 template <image_type Type, access_mode AccessMode, bool ExternalAccess>
 class accessor<void, Type, target::framebuffer_attachment, AccessMode,
                ExternalAccess>
-    : public detail::image_accessor<void, Type,
-                                    target::framebuffer_attachment, AccessMode,
-                                    ExternalAccess>
+    : public detail::image_accessor<void, Type, target::framebuffer_attachment,
+                                    AccessMode, ExternalAccess>
 
 {
 public:
@@ -217,7 +219,7 @@ public:
                              AccessMode, ExternalAccess>;
 
   accessor(image<Type, ExternalAccess> &img, framebuffer_attachment_tag_t,
-           scheduler &                        sched)
+           scheduler &                  sched)
       : base_t{img, sched} {}
 
   // framebuffer_attachment, discard (implies write-only)
@@ -245,14 +247,14 @@ class accessor<void, Type, target::pixel_transfer_destination,
                                     target::pixel_transfer_destination,
                                     access_mode::write_only, ExternalAccess> {
 public:
-  accessor(const image<Type, ExternalAccess> &img,
-           pixel_transfer_destination_t, scheduler &sched)
+  accessor(const image<Type, ExternalAccess> &img, pixel_transfer_destination_t,
+           scheduler &                        sched)
       : detail::image_accessor{img, sched} {}
 
   /*// TODO maybe find a safer way to specify the format of the data?
   void upload_image_data(const range<Dimensions> &offset,
-                         const image_size<Dimensions> &size, GLenum externalFormat,
-                         GLenum type, const void *data) {
+                         const image_size<Dimensions> &size, GLenum
+  externalFormat, GLenum type, const void *data) {
     // get the texture object,
     // auto tex = get_gl_object();
   }*/

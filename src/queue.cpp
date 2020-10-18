@@ -2,14 +2,32 @@
 #include <boost/functional/hash.hpp>
 #include <chrono>
 #include <fmt/format.h>
+#include <fstream>
 #include <graal/queue.hpp>
 #include <numeric>
 #include <span>
 #include <unordered_set>
 
+//#include <boost/graph/adjacency_list.hpp>
+#include <boost/dynamic_bitset.hpp>
+
 namespace graal {
 namespace detail {
 namespace {
+
+std::string get_task_name(task_index index, const task &task) {
+  if (task.name.empty()) {
+    return fmt::format("#{}", index);
+  }
+  return task.name;
+}
+
+std::string get_object_name(std::size_t index, const named_object &obj) {
+  if (obj.name().empty()) {
+    return fmt::format("#{}", index);
+  }
+  return std::string{obj.name()};
+}
 
 /// Converts a vector of intrusive_ptr to a vector of raw pointers.
 template <typename T>
@@ -59,7 +77,7 @@ private:
   std::vector<bool> adj_matrix_;
 };
 
-using live_set = std::vector<temporary_index>;
+using live_set = boost::dynamic_bitset<uint64_t>;
 
 /// @brief
 /// @param tasks
@@ -173,10 +191,8 @@ build_interference_graph(const std::vector<virtual_resource_ptr> &temporaries,
   return g;
 }
 
-
 void allocate_resources(const std::vector<virtual_resource_ptr> &temporaries,
-                    const interference_graph &               interference)
-{
+                        const interference_graph &               interference) {
   // compute the degree of the interference graph: this gives us a higher
   // bound on the number of colors
   auto num_temporaries = temporaries.size();
@@ -243,8 +259,84 @@ void allocate_resources(const std::vector<virtual_resource_ptr> &temporaries,
     fmt::print(" - `{}` => {}\n", temporaries[i]->name(), coloring[i]);
   }
 
-  // allocate resources for each color
+  // allocate resources: for each color, allocate a resource that fits the use
+  for (int c = 0; c < ncolors; ++c) {
+    temporary_index first_colored = invalid_temporary_index;
+    for (temporary_index i = 0; i < num_temporaries; ++i) {
+      if (coloring[i] == c) {
+        if (first_colored == invalid_temporary_index) {
+          // first time we see this color, allocate the resource
+          first_colored = i;
+          temporaries[i]->allocate();
+        } else {
+          // alias the resource with the one already created for this color
+          temporaries[i]->alias_with(*temporaries[first_colored]);
+        }
+      }
+    }
+  }
+}
 
+void dump_tasks(std::ostream &out, const std::vector<task> &tasks,
+                const std::vector<virtual_resource_ptr> &temporaries,
+                const std::vector<live_set> &            live_sets) {
+  out << "digraph G {\n";
+  out << "node [shape=record fontname=Consolas];\n";
+
+  for (task_index index = 0; index < tasks.size(); ++index) {
+    const auto &task = tasks[index];
+
+    out << "t_" << index << " [shape=record label=\"{";
+    out << index;
+    if (!task.name.empty()) {
+      out << "(" << task.name << ")";
+    }
+    out << "|{{reads\\l|writes\\l|live\\l}|{";
+    {
+      int i = 0;
+      for (auto r : task.reads) {
+        out << get_object_name(r, *temporaries[r]);
+        if (i != task.reads.size() - 1) {
+          out << ",";
+        }
+        ++i;
+      }
+    }
+    out << "\\l|";
+    {
+      int i = 0;
+      for (auto w : task.writes) {
+        out << get_object_name(w, *temporaries[w]);
+        if (i != task.writes.size() - 1) {
+          out << ",";
+        }
+        ++i;
+      }
+    }
+    out << "\\l|";
+
+    {
+      int i = 0;
+      for (auto live : live_sets[index]) {
+        out << get_object_name(live, *temporaries[live]);
+        if (i != live_sets[index].size() - 1) {
+          out << ",";
+        }
+        ++i;
+      }
+    }
+
+    out << "\\l}}}\"]\n";
+  }
+
+  for (task_index i = 0; i < tasks.size(); ++i) {
+    for (auto pred : tasks[i].preds) {
+      out << "t_" << pred << " -> "
+          << "t_" << i << "\n";
+    }
+  }
+
+  out << "}\n";
 }
 
 } // namespace
@@ -263,6 +355,8 @@ void queue_impl::enqueue_pending_tasks() {
     return;
   }
 
+  fmt::print("=== submitting batch #{} ===\n", current_batch_);
+
   // insert the dummy end task for liveness analysis
   task end_task;
   end_task.name = "END";
@@ -270,6 +364,8 @@ void queue_impl::enqueue_pending_tasks() {
     if (!temporaries_[i]->discarded_) {
       // externally reachable
       end_task.add_read(i);
+      // TODO preds?
+      // end_task.preds.push_back();
     }
   }
   pending_tasks_.push_back(std::move(end_task));
@@ -299,6 +395,13 @@ void queue_impl::enqueue_pending_tasks() {
     } else {
       fmt::print(" - task #{} `{}`\n", task_index, t.name);
     }
+    if (!t.preds.empty()) {
+      fmt::print("   preds: ");
+      for (auto pred : t.preds) {
+        fmt::print("{},", pred);
+      }
+      fmt::print("\n");
+    }
     task_index++;
   }
 
@@ -309,8 +412,6 @@ void queue_impl::enqueue_pending_tasks() {
 
   // allocate resources for each color
   // register allocation
-
-  //
 
   /*fmt::print("Liveness:\n");
   const auto num_tasks = pending_tasks_.size();
@@ -324,12 +425,19 @@ void queue_impl::enqueue_pending_tasks() {
     fmt::print("\n");
   }*/
 
+  {
+    std::ofstream out_graphviz{fmt::format("graal_test_{}.dot", current_batch_),
+                               std::ios::trunc};
+    dump_tasks(out_graphviz, pending_tasks_, temporaries_, live_sets);
+  }
+
   for (auto &&tmp : temporaries_) {
     tmp->tmp_index_ = invalid_temporary_index;
   }
 
   temporaries_.clear();
   pending_tasks_.clear();
+  current_batch_++;
 }
 
 temporary_index queue_impl::add_temporary(virtual_resource_ptr resource) {
@@ -346,20 +454,36 @@ temporary_index queue_impl::add_temporary(virtual_resource_ptr resource) {
 } // namespace detail
 
 void scheduler::add_resource_access(
-    std::shared_ptr<detail::virtual_resource> virt_res, access_mode mode) {
-  auto tmp_index = queue_.add_temporary(virt_res);
+    detail::resource_tracker &tracker, access_mode mode,
+    std::shared_ptr<detail::virtual_resource> virt_res) {
+  if (tracker.batch == batch_index_ &&
+      (mode == access_mode::read_only || mode == access_mode::read_write)) {
+    // if the last write was in a different batch
+    // we know that all commands have been submitted.
+    task_.preds.push_back(tracker.last_producer);
+  }
 
-  switch (mode) {
-  case access_mode::read_only:
-    task_.add_read(tmp_index);
-    break;
-  case access_mode::write_only:
-    task_.add_write(tmp_index);
-    break;
-  case access_mode::read_write:
-    task_.add_read(tmp_index);
-    task_.add_write(tmp_index);
-    break;
+  if (mode == access_mode::read_write || mode == access_mode::write_only) {
+    tracker.batch = batch_index_;
+    tracker.last_producer = task_index_;
+  }
+
+  // there's an associated virtual resource, track usage
+  if (virt_res) {
+    auto tmp_index = queue_.add_temporary(virt_res);
+
+    switch (mode) {
+    case access_mode::read_only:
+      task_.add_read(tmp_index);
+      break;
+    case access_mode::write_only:
+      task_.add_write(tmp_index);
+      break;
+    case access_mode::read_write:
+      task_.add_read(tmp_index);
+      task_.add_write(tmp_index);
+      break;
+    }
   }
 }
 

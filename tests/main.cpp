@@ -9,8 +9,27 @@
 #include "imgui_impl_opengl3.h"
 #include <GLFW/glfw3.h>
 
+#include <fstream>
+
+using namespace graal;
+
+#define CIMG(NAME)                                                             \
+  image NAME{image_format::r16g16_sfloat, range{1280, 720}};                   \
+  NAME.set_name(#NAME);
+
+#define VIMG(NAME)                                                             \
+  image NAME{virtual_image, image_format::r16g16_sfloat, range{1280, 720}};    \
+  NAME.set_name(#NAME);
+
+#define READ(img) accessor read_##img{img, sampled_image, sched};
+#define DRAW(img) accessor draw_##img{img, framebuffer_attachment, sched};
+#define WRITE(img)                                                             \
+  accessor draw_##img{img, framebuffer_attachment, discard, sched};
+
+void test_case_1(graal::queue &q);
+void test_case_2(graal::queue &q);
+
 int main() {
-  using namespace graal;
 
   //=======================================================
   // SETUP
@@ -64,78 +83,8 @@ int main() {
   (void)i6.has_samples();
   (void)i6.samples();
 
-#define IMG(NAME)                                                              \
-  image NAME{virtual_image, image_format::r16g16_sfloat, range{1280, 720}};    \
-  NAME.set_name(#NAME);
-
-  IMG(A)
-  IMG(B)
-  IMG(C)
-  IMG(D1)
-  IMG(D2)
-  IMG(E)
-  IMG(F)
-  IMG(G)
-  IMG(H)
-  IMG(I)
-  IMG(J)
-  IMG(K)
-
-#define READ(img) accessor read_##img{img, sampled_image, sched};
-#define DRAW(img) accessor draw_##img{img, framebuffer_attachment, sched};
-#define WRITE(img)                                                             \
-  accessor draw_##img{img, framebuffer_attachment, discard, sched};
-
-  q.schedule("T0", [&](scheduler &sched) { DRAW(A) });
-  q.schedule("T1", [&](scheduler &sched) { DRAW(B) });
-  q.schedule("T2", [&](scheduler &sched) { DRAW(C) });
-
-  q.schedule("T3", [&](scheduler &sched) {
-    READ(A)
-    READ(B)
-    WRITE(D1)
-    WRITE(D2)
-  });
-
-  q.schedule("T4", [&](scheduler &sched) {
-    READ(D2)
-    READ(C)
-    WRITE(E)
-  });
-
-  q.schedule("T5", [&](scheduler &sched) {
-    READ(D1)
-    WRITE(F)
-  });
-
-  q.schedule("T6", [&](scheduler &sched) {
-    READ(E)
-    READ(F)
-    WRITE(G)
-  });
-
-  q.schedule("T7", [&](scheduler &sched) { READ(G) WRITE(H) });
-  q.schedule("T8", [&](scheduler &sched) { READ(H) WRITE(I) });
-  q.schedule("T8", [&](scheduler &sched) { READ(I) WRITE(J) });
-  q.schedule("T9", [&](scheduler &sched) { READ(J) WRITE(K) });
-
-  A.discard();
-  B.discard();
-  C.discard();
-  D1.discard();
-  D2.discard();
-  E.discard();
-  F.discard();
-  G.discard();
-  H.discard();
-  I.discard();
-  J.discard();
-
-  q.enqueue_pending_tasks();
-
-  q.schedule("T10", [&](scheduler &sched) { DRAW(K) });
-
-  q.enqueue_pending_tasks();
+  test_case_1(q);
+  test_case_2(q);
 
   //=======================================================
   // TEST
@@ -172,4 +121,99 @@ int main() {
   glfwTerminate();
 
   return 0;
+}
+
+//=============================================================================
+
+void test_case_1(graal::queue &q) {
+
+  VIMG(A)
+  VIMG(B)
+  VIMG(C)
+  VIMG(D1)
+  VIMG(D2)
+  VIMG(E)
+  VIMG(F)
+  VIMG(G)
+  VIMG(H)
+  VIMG(I)
+  VIMG(J)
+  VIMG(K)
+
+  q.schedule("T0", [&](scheduler &sched) { DRAW(A) });
+  q.schedule("T1", [&](scheduler &sched) { DRAW(B) });
+  q.schedule("T2", [&](scheduler &sched) { DRAW(C) });
+
+  q.schedule("T3", [&](scheduler &sched) {
+    READ(A)
+    READ(B)
+    WRITE(D1)
+    WRITE(D2)
+  });
+
+  q.schedule("T4", [&](scheduler &sched) {
+    READ(D2)
+    READ(C)
+    WRITE(E)
+  });
+
+  q.schedule("T5", [&](scheduler &sched) {
+    READ(D1)
+    WRITE(F)
+  });
+
+  q.schedule("T6", [&](scheduler &sched) {
+    READ(E)
+    READ(F)
+    WRITE(G)
+  });
+
+  q.schedule("T7", [&](scheduler &sched) { READ(G) WRITE(H) });
+  q.schedule("T8", [&](scheduler &sched) { READ(H) WRITE(I) });
+  q.schedule("T9", [&](scheduler &sched) { READ(I) WRITE(J) });
+  q.schedule("T10", [&](scheduler &sched) { READ(J) WRITE(K) });
+
+  A.discard();
+  B.discard();
+  C.discard();
+  D1.discard();
+  D2.discard();
+  E.discard();
+  F.discard();
+  G.discard();
+  H.discard();
+  I.discard();
+  J.discard();
+
+  q.enqueue_pending_tasks();
+
+  q.schedule("T10", [&](scheduler &sched) { DRAW(K) });
+  q.enqueue_pending_tasks();
+}
+
+void test_case_2(queue &q) {
+  VIMG(S);
+
+  VIMG(C);
+
+  {
+    VIMG(A1);
+    VIMG(A2);
+    VIMG(A3);
+    VIMG(B1);
+    VIMG(B2);
+    VIMG(B3);
+    q.schedule([&](scheduler &sched) { WRITE(S) });
+    // A branch
+    q.schedule([&](scheduler &sched) { READ(S) WRITE(A1) });
+    q.schedule([&](scheduler &sched) { READ(A1) WRITE(A2) });
+    q.schedule([&](scheduler &sched) { READ(A2) WRITE(A3) });
+    // B branch
+    q.schedule([&](scheduler &sched) { READ(S) WRITE(B1) });
+    q.schedule([&](scheduler &sched) { READ(B1) WRITE(B2) });
+    q.schedule([&](scheduler &sched) { READ(B2) WRITE(B3) });
+    // C
+    q.schedule([&](scheduler &sched) { READ(A3) READ(B3) WRITE(C) });
+  }
+  q.enqueue_pending_tasks();
 }
