@@ -21,6 +21,7 @@ struct task {
   std::vector<temporary_index> reads;
   std::vector<temporary_index> writes;
   std::vector<task_index>      preds;
+  std::vector<task_index>      succs;
 };
 
 /// @brief Used to track the last producer when using a resource in a queue.

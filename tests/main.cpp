@@ -140,6 +140,8 @@ void test_case_1(graal::queue &q) {
   VIMG(J)
   VIMG(K)
 
+  //q.schedule("INIT", [&](scheduler &sched) { WRITE(A) WRITE(B) WRITE(C) });
+
   q.schedule("T0", [&](scheduler &sched) { DRAW(A) });
   q.schedule("T1", [&](scheduler &sched) { DRAW(B) });
   q.schedule("T2", [&](scheduler &sched) { DRAW(C) });
@@ -170,7 +172,7 @@ void test_case_1(graal::queue &q) {
 
   q.schedule("T7", [&](scheduler &sched) { READ(G) WRITE(H) });
   q.schedule("T8", [&](scheduler &sched) { READ(H) WRITE(I) });
-  q.schedule("T9", [&](scheduler &sched) { READ(I) WRITE(J) });
+  q.schedule("T9", [&](scheduler &sched) { READ(I)  READ(G) WRITE(J) });
   q.schedule("T10", [&](scheduler &sched) { READ(J) WRITE(K) });
 
   A.discard();

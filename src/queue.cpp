@@ -8,8 +8,10 @@
 #include <span>
 #include <unordered_set>
 
-//#include <boost/graph/adjacency_list.hpp>
 #include <boost/dynamic_bitset.hpp>
+#include <boost/graph/adjacency_matrix.hpp>
+#include <boost/graph/graph_utility.hpp>
+#include <boost/graph/transitive_closure.hpp>
 
 namespace graal {
 namespace detail {
@@ -43,25 +45,34 @@ template <typename T> void sorted_vector_insert(std::vector<T> &vec, T elem) {
   vec.insert(it, std::move(elem));
 }
 
-class interference_graph {
+class adjacency_matrix {
 public:
-  interference_graph(std::size_t num_temporaries) : n_{num_temporaries} {
-    adj_matrix_.resize((n_ * (n_ + 1)) / 2, false);
+  adjacency_matrix(std::size_t n) : n_{n} {
+    mat_.resize((n_ * (n_ + 1)) / 2, false);
   }
 
-  void add_edge(std::size_t a, std::size_t b) { adj_matrix_[idx(a, b)] = true; }
+  void add_edge(std::size_t a, std::size_t b) { mat_[idx(a, b)] = true; }
 
   bool operator()(std::size_t a, std::size_t b) const {
-    return adj_matrix_[idx(a, b)];
+    return mat_[idx(a, b)];
   }
 
   void dump() {
+    fmt::print("  |");
     for (std::size_t i = 0; i < n_; ++i) {
-      for (std::size_t j = 0; j <= i; ++j) {
+      fmt::print("{:02d} ", i);
+    }
+    fmt::print("\n");
+    for (std::size_t i = 0; i < n_; ++i) {
+      fmt::print("{:02d}|", i);
+      for (std::size_t j = 0; j < n_; ++j) {
         if (this->operator()(i, j)) {
-          fmt::print(" - v{} -- v{}\n", i, j);
+          fmt::print("1  ");
+        } else {
+          fmt::print("0  ");
         }
       }
+      fmt::print("\n");
     }
   }
 
@@ -74,87 +85,192 @@ private:
   }
 
   std::size_t       n_;
-  std::vector<bool> adj_matrix_;
+  std::vector<bool> mat_;
 };
 
 using live_set = boost::dynamic_bitset<uint64_t>;
 
-/// @brief
+/// @brief magic
 /// @param tasks
 /// @param task_index
-/// @return
+/// @return magic
 std::vector<live_set>
 compute_liveness(const std::vector<virtual_resource_ptr> &temporaries,
-                 const std::vector<detail::task> &        tasks) {
+                 const std::vector<detail::task> &        tasks)
+
+{
   namespace chrono = std::chrono;
   auto start = chrono::high_resolution_clock::now();
 
-  const size_t          num_tasks = tasks.size();
+  const size_t num_tasks = tasks.size();
+  const size_t num_temporaries = temporaries.size();
+
+  // 1. compute the transitive closure of the task graph, as this will help us
+  // determine the tasks that can be run in parallel
+  std::vector<live_set> reachability;
+  reachability.resize(num_tasks);
+  for (size_t i = 0; i < num_tasks; ++i) {
+    // tasks already in topological order
+    reachability[i].resize(num_tasks);
+    for (auto pred : tasks[i].preds) {
+      reachability[i].set(pred);
+      reachability[i] |= reachability[pred];
+    }
+  }
+
+  // init use/def sets
   std::vector<live_set> live_sets;
-  live_sets.reserve(num_tasks);
+  std::vector<live_set> in_sets;
+  std::vector<live_set> out_sets;
+  std::vector<live_set> use;
+  std::vector<live_set> def;
+  use.resize(num_tasks);
+  def.resize(num_tasks);
+  in_sets.resize(num_tasks);
+  out_sets.resize(num_tasks);
+  live_sets.resize(num_tasks);
+  for (size_t i = 0; i < num_tasks; ++i) {
+    use[i].resize(num_temporaries);
+    def[i].resize(num_temporaries);
+    in_sets[i].resize(num_temporaries);
+    out_sets[i].resize(num_temporaries);
+    live_sets[i].resize(num_temporaries);
+    for (auto r : tasks[i].reads) {
+      use[i].set(r);
+    }
+    for (auto w : tasks[i].writes) {
+      def[i].set(w);
+    }
+  }
 
-  live_set cur_live;
-  live_set cur_live_2;
+  /*live_set prev_in;
+  live_set prev_out;
 
-  for (size_t t = 0; t < num_tasks; ++t) {
+  bool end;
+  do {
+    end = true;
+    for (size_t i = 0; i < num_tasks; ++i) {
+      auto &in = in_sets[i];
+      prev_in = in;
+      auto &out = out_sets[i];
+      prev_out = out;
+      auto &task = tasks[i];
 
-    // Compute the live set task index t, which is the union of the live-in set
-    // and the live-out set. Note that most descriptions of liveness analysis
-    // produce the live-out set, as the base from which to build the
-    // interference graph. In our case, we must also consider "inputs" as live.
-    // For instance, given the statement:
-    //    a <- f(b)
-    // if live_in = { b } and live_out = { a }, then a register allocation
-    // algorithm could assign the same register for a and b:
-    //    r <- f(r)
-    // This does not work with GPU textures, because f could represent a draw
-    // operation that samples a texture, and you'd be sampling and writing to
-    // the same texture at the same time.
-
-    // add defs to the live set
-    cur_live_2.clear();
-    std::set_union(cur_live.begin(), cur_live.end(), tasks[t].writes.begin(),
-                   tasks[t].writes.end(), std::back_inserter(cur_live_2));
-
-    // *also* add uses to the live set. see comment above
-    cur_live.clear();
-    std::set_union(cur_live_2.begin(), cur_live_2.end(), tasks[t].reads.begin(),
-                   tasks[t].reads.end(), std::back_inserter(cur_live));
-
-    // live_set(t) = live_set(t-1) U defs(t) U uses(t)
-
-    // remove dead vars
-    // TODO should only consider vars that are in the def/use set
-    // otherwise we're searching for nothing
-    auto it = std::remove_if(cur_live.begin(), cur_live.end(), [&](auto v) {
-      // if var in current def/use set, skip
-      if (std::binary_search(tasks[t].writes.begin(), tasks[t].writes.end(),
-                             v) ||
-          std::binary_search(tasks[t].reads.begin(), tasks[t].reads.end(), v)) {
-        return false;
+      in = out;
+      out.reset();
+      for (auto w : task.writes) {
+        in.reset(w);
+      }
+      for (auto r : task.reads) {
+        in.set(r);
+        // out.set(r);
       }
 
-      bool killed = true;
-      for (size_t succ = t + 1; succ < num_tasks; ++succ) {
-        if (std::binary_search(tasks[succ].writes.begin(),
-                               tasks[succ].writes.end(), v)) {
-          break; // there's a def, so it's dead
-        }
-        if (std::binary_search(tasks[succ].reads.begin(),
-                               tasks[succ].reads.end(), v)) {
-          killed = false; // there's a use without a def before
-          break;
+       for (auto s : task.succs) {
+      //if (i < num_tasks - 1) {
+        // assume sequential execution, single successor
+        out |= in_sets[s];
+      //}
+      }
+
+      fmt::print("in [{:2d}]: ", i);
+      for (size_t j = 0; j < num_temporaries; ++j) {
+        if (in[j]) {
+          fmt::print("{:02d} ", j);
+        } else {
+          fmt::print("   ");
         }
       }
-      // if we fall off the loop, this means that there were no
-      // no defs, and no uses: assume it's dead
-      return killed;
-    });
-    cur_live.erase(it, cur_live.end());
+      fmt::print("\n");
 
-    // live_set(t) = (live_set(t-1) U defs(t) U uses(t)) - killed(t)
+      fmt::print("out[{:2d}]: ", i);
+      for (size_t j = 0; j < num_temporaries; ++j) {
+        if (out[j]) {
+          fmt::print("{:02d} ", j);
+        } else {
+          fmt::print("   ");
+        }
+      }
+      fmt::print("\n");
 
-    live_sets.push_back(cur_live);
+      end &= (prev_in == in) && (prev_out == out);
+    }
+    // fmt::print("\n");
+
+  } while (!end);*/
+
+  /*for (size_t i = 0; i < num_tasks; ++i) {
+    out_sets[i] |= in_sets[i];
+  }*/
+
+  live_set live;
+  live_set kill;
+  live_set mask;
+  live_set tmp;
+  live.resize(num_temporaries);
+  kill.resize(num_temporaries);
+  mask.resize(num_temporaries);
+  tmp.resize(num_temporaries);
+
+  for (size_t i = 0; i < num_tasks; ++i) {
+    live.reset();
+    for (auto p : tasks[i].preds) {
+      live |= live_sets[p];
+    }
+
+    live |= use[i];
+    live |= def[i];
+
+    // Some tasks may run in parallel because they have no data-dependencies
+    // between them. However, the liveness analysis performed above assumes
+    // serial execution of all tasks in the order of which they appear in the
+    // list. Following this analysis, resource allocation may map two tasks on
+    // the same resource, even if those two tasks could run in parallel. This
+    // forces the two tasks to run serially, which negatively impacts
+    // performance.
+    //
+    // In other words, we only want to map the same resource to two different
+    // tasks if we can prove that they can't possibly run in parallel. To
+    // account for that, we modify the live-sets of each task by adding the
+    // union of the live sets of all tasks that could run in parallel.
+
+    // determine the kill set
+
+    // init kill, which basically says "don't kill the variables we access in
+    // the task". kill = ~(use[i] | def[i])
+    kill = use[i];
+    kill |= def[i];
+    kill.flip();
+    mask.reset();
+
+    /*for (size_t j = 0; j < num_tasks; ++j) {
+      if (i != j && !reachability[i][j] && !reachability[j][i]) {
+        kill -= use[j];
+        kill -= def[j];
+        live |= use[j];
+        live |= def[j];
+      }
+    }*/
+
+    for (size_t succ = i + 1; succ < num_tasks; ++succ) {
+      if (!reachability[succ][i])
+        continue;
+      // def use kill mask
+      // 0   0   1    0
+      // 1   0   1    1
+      // 0   1   0    0 (no need for mask)
+      // 1   1   0    1
+
+      // TODO explain this
+      tmp = use[succ];
+      tmp.flip();
+      tmp |= mask;
+      kill &= tmp;
+      mask |= def[succ];
+    }
+
+    live -= kill;
+    live_sets[i] = live;
   }
 
   auto stop = chrono::high_resolution_clock::now();
@@ -163,36 +279,76 @@ compute_liveness(const std::vector<virtual_resource_ptr> &temporaries,
   fmt::print("liveness analysis took {}us\n", us.count());
   for (size_t t = 0; t < num_tasks; ++t) {
     fmt::print("live set for task #{}:", t);
-    for (auto &&live : live_sets[t]) {
-      fmt::print("{},", temporaries[live]->name());
+    for (size_t i = 0; i < num_temporaries; ++i) {
+      if (live_sets[t].test(i)) {
+        fmt::print("{},", temporaries[i]->name());
+      }
     }
     fmt::print("\n");
   }
 
-  return live_sets;
-}
+  //----------------------------------------------
+  // build interference graph
+  adjacency_matrix g{num_temporaries};
 
-interference_graph
-build_interference_graph(const std::vector<virtual_resource_ptr> &temporaries,
-                         const std::vector<live_set> &            live_sets) {
-  interference_graph g{temporaries.size()};
-
-  for (auto &&lset : live_sets) {
+  for (size_t i = 0; i < num_tasks; ++i) {
+    const auto &live = live_sets[i];
     // for each task, add an edge between values that live at the same time
-    for (auto a : lset) {
-      for (auto b : lset) {
-        if (a != b) {
-          g.add_edge(a, b);
+    for (size_t ta = 0; ta < num_temporaries; ++ta) {
+      for (size_t tb = 0; tb < ta; ++tb) {
+        if (live[ta] && live[tb]) {
+          g.add_edge(ta, tb);
+        }
+      }
+    }
+    // add edges between live vars in parallel tasks
+    for (auto j = 0; j < i; ++j) {
+      const auto &live_b = live_sets[j];
+      if (!reachability[i][j]) {
+        for (size_t ta = 0; ta < num_temporaries; ++ta) {
+          for (size_t tb = 0; tb < num_temporaries; ++tb) {
+            if (ta != tb && live[ta] && live_b[tb]) {
+              g.add_edge(ta, tb);
+            }
+          }
         }
       }
     }
   }
 
+  g.dump();
+
+  // return g;
+
+  return live_sets;
+} // namespace
+
+adjacency_matrix
+build_interference_graph(const std::vector<virtual_resource_ptr> &temporaries,
+                         const std::vector<live_set> &            live_sets) {
+  const auto       num_temporaries = temporaries.size();
+  adjacency_matrix g{num_temporaries};
+
+  for (auto &&lset : live_sets) {
+    // for each task, add an edge between values that live at the same time
+    for (size_t i = 0; i < num_temporaries; ++i) {
+      for (size_t j = 0; j < num_temporaries; ++j) {
+        if (i != j) {
+          if (lset.test(i) && lset.test(j)) {
+            g.add_edge(i, j);
+          }
+        }
+      }
+    }
+  }
+
+  // add edges between parallel nodes
+
   return g;
 }
 
 void allocate_resources(const std::vector<virtual_resource_ptr> &temporaries,
-                        const interference_graph &               interference) {
+                        const adjacency_matrix &                 interference) {
   // compute the degree of the interference graph: this gives us a higher
   // bound on the number of colors
   auto num_temporaries = temporaries.size();
@@ -316,13 +472,13 @@ void dump_tasks(std::ostream &out, const std::vector<task> &tasks,
     out << "\\l|";
 
     {
-      int i = 0;
-      for (auto live : live_sets[index]) {
-        out << get_object_name(live, *temporaries[live]);
-        if (i != live_sets[index].size() - 1) {
-          out << ",";
+      for (size_t t = 0; t < temporaries.size(); ++t) {
+        if (live_sets[index].test(t)) {
+          out << get_object_name(t, *temporaries[t]);
+          if (t != live_sets[index].size() - 1) {
+            out << ",";
+          }
         }
-        ++i;
       }
     }
 
@@ -358,7 +514,7 @@ void queue_impl::enqueue_pending_tasks() {
   fmt::print("=== submitting batch #{} ===\n", current_batch_);
 
   // insert the dummy end task for liveness analysis
-  task end_task;
+  /*task end_task;
   end_task.name = "END";
   for (std::size_t i = 0; i < temporaries_.size(); ++i) {
     if (!temporaries_[i]->discarded_) {
@@ -368,7 +524,7 @@ void queue_impl::enqueue_pending_tasks() {
       // end_task.preds.push_back();
     }
   }
-  pending_tasks_.push_back(std::move(end_task));
+  pending_tasks_.push_back(std::move(end_task));*/
 
   // we need to assign concrete resources to virtual resources
   /*const auto num_temporaries = temporaries_.size();
@@ -402,13 +558,20 @@ void queue_impl::enqueue_pending_tasks() {
       }
       fmt::print("\n");
     }
+    if (!t.succs.empty()) {
+      fmt::print("   succs: ");
+      for (auto s : t.succs) {
+        fmt::print("{},", s);
+      }
+      fmt::print("\n");
+    }
     task_index++;
   }
 
   auto live_sets = compute_liveness(temporaries_, pending_tasks_);
-  auto interference = build_interference_graph(temporaries_, live_sets);
-  interference.dump();
-  allocate_resources(temporaries_, interference);
+  // auto interference = build_interference_graph(temporaries_, live_sets);
+  // interference.dump();
+  // allocate_resources(temporaries_, interference);
 
   // allocate resources for each color
   // register allocation
@@ -460,6 +623,14 @@ void scheduler::add_resource_access(
       (mode == access_mode::read_only || mode == access_mode::read_write)) {
     // if the last write was in a different batch
     // we know that all commands have been submitted.
+
+    auto &pred_succ = queue_.pending_tasks_[tracker.last_producer].succs;
+    if (std::find(pred_succ.begin(), pred_succ.end(), task_index_) ==
+        pred_succ.end()) {
+      // add current task in the list of successors
+      pred_succ.push_back(task_index_);
+    }
+    // add the producer to the current list of predecessors
     task_.preds.push_back(tracker.last_producer);
   }
 
