@@ -32,8 +32,9 @@ public:
   /// @param other 
   virtual void alias_with(virtual_resource& other) = 0;
 
-private:
+protected:
   bool discarded_ = false; // no more external references to this resource
+  bool noalias_ = false;    // explicitly forbid aliasing
   temporary_index tmp_index_ =
       invalid_temporary_index; // assigned temporary index
 };

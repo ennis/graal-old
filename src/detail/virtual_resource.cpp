@@ -10,13 +10,10 @@ bool virtual_image_resource::is_aliasable_with(
     return false;
   }
 
-  const auto &img = static_cast<const virtual_image_resource &>(other);
+  const auto &other_img = static_cast<const virtual_image_resource &>(other);
 
-  // for now, only alias memory between textures that have the exact same
-  // const bool aliasable = format_
-
-  // TODO
-  return false;
+  // for now, only alias memory between textures that have the exact same description
+  return !noalias_ && (desc_ == other_img.desc_);
 }
 
 void virtual_image_resource::allocate() {

@@ -21,10 +21,10 @@ using namespace graal;
   image NAME{virtual_image, image_format::r16g16_sfloat, range{1280, 720}};    \
   NAME.set_name(#NAME);
 
-#define READ(img) accessor read_##img{img, sampled_image, sched};
-#define DRAW(img) accessor draw_##img{img, framebuffer_attachment, sched};
+#define READ(img) accessor read_##img{img, sampled_image, h};
+#define DRAW(img) accessor draw_##img{img, framebuffer_attachment, h};
 #define WRITE(img)                                                             \
-  accessor draw_##img{img, framebuffer_attachment, discard, sched};
+  accessor draw_##img{img, framebuffer_attachment, discard, h};
 
 void test_case_1(graal::queue &q);
 void test_case_2(graal::queue &q);
@@ -142,38 +142,38 @@ void test_case_1(graal::queue &q) {
 
   //q.schedule("INIT", [&](scheduler &sched) { WRITE(A) WRITE(B) WRITE(C) });
 
-  q.schedule("T0", [&](scheduler &sched) { DRAW(A) });
-  q.schedule("T1", [&](scheduler &sched) { DRAW(B) });
-  q.schedule("T2", [&](scheduler &sched) { DRAW(C) });
+  q.schedule("T0", [&](handler &h) { DRAW(A) });
+  q.schedule("T1", [&](handler&h) { DRAW(B) });
+  q.schedule("T2", [&](handler&h) { DRAW(C) });
 
-  q.schedule("T3", [&](scheduler &sched) {
+  q.schedule("T3", [&](handler&h) {
     READ(A)
     READ(B)
     WRITE(D1)
     WRITE(D2)
   });
 
-  q.schedule("T4", [&](scheduler &sched) {
+  q.schedule("T4", [&](handler&h) {
     READ(D2)
     READ(C)
     WRITE(E)
   });
 
-  q.schedule("T5", [&](scheduler &sched) {
+  q.schedule("T5", [&](handler&h) {
     READ(D1)
     WRITE(F)
   });
 
-  q.schedule("T6", [&](scheduler &sched) {
+  q.schedule("T6", [&](handler&h) {
     READ(E)
     READ(F)
     WRITE(G)
   });
 
-  q.schedule("T7", [&](scheduler &sched) { READ(G) WRITE(H) });
-  q.schedule("T8", [&](scheduler &sched) { READ(H) WRITE(I) });
-  q.schedule("T9", [&](scheduler &sched) { READ(I)  READ(G) WRITE(J) });
-  q.schedule("T10", [&](scheduler &sched) { READ(J) WRITE(K) });
+  q.schedule("T7", [&](handler&h) { READ(G) WRITE(H) });
+  q.schedule("T8", [&](handler&h) { READ(H) WRITE(I) });
+  q.schedule("T9", [&](handler&h) { READ(I)  READ(G) WRITE(J) });
+  q.schedule("T10", [&](handler&h) { READ(J) WRITE(K) });
 
   A.discard();
   B.discard();
@@ -189,7 +189,15 @@ void test_case_1(graal::queue &q) {
 
   q.enqueue_pending_tasks();
 
-  q.schedule("T10", [&](scheduler &sched) { DRAW(K) });
+  q.schedule("T10", [&](handler &h) {
+    accessor write_K{K, framebuffer_attachment, discard, h};
+
+    auto f = [=] {
+        // do something with tex
+        auto tex = write_K.get_gl_object();
+    };
+
+  });
   q.enqueue_pending_tasks();
 }
 
@@ -205,17 +213,17 @@ void test_case_2(queue &q) {
     VIMG(B1);
     VIMG(B2);
     VIMG(B3);
-    q.schedule([&](scheduler &sched) { WRITE(S) });
+    q.schedule([&](handler&h) { WRITE(S) });
     // A branch
-    q.schedule([&](scheduler &sched) { READ(S) WRITE(A1) });
-    q.schedule([&](scheduler &sched) { READ(A1) WRITE(A2) });
-    q.schedule([&](scheduler &sched) { READ(A2) WRITE(A3) });
+    q.schedule([&](handler&h) { READ(S) WRITE(A1) });
+    q.schedule([&](handler&h) { READ(A1) WRITE(A2) });
+    q.schedule([&](handler&h) { READ(A2) WRITE(A3) });
     // B branch
-    q.schedule([&](scheduler &sched) { READ(S) WRITE(B1) });
-    q.schedule([&](scheduler &sched) { READ(B1) WRITE(B2) });
-    q.schedule([&](scheduler &sched) { READ(B2) WRITE(B3) });
+    q.schedule([&](handler&h) { READ(S) WRITE(B1) });
+    q.schedule([&](handler&h) { READ(B1) WRITE(B2) });
+    q.schedule([&](handler&h) { READ(B2) WRITE(B3) });
     // C
-    q.schedule([&](scheduler &sched) { READ(A3) READ(B3) WRITE(C) });
+    q.schedule([&](handler&h) { READ(A3) READ(B3) WRITE(C) });
   }
   q.enqueue_pending_tasks();
 }

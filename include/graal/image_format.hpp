@@ -1,5 +1,6 @@
 #pragma once
 #include <string_view>
+#include <graal/errors.hpp>
 
 namespace graal {
 
@@ -63,6 +64,8 @@ inline constexpr std::string_view get_image_format_name(image_format fmt) {
     return "r32g32b32_sfloat"sv;
   case image_format::r32g32b32a32_sfloat:
     return "r32g32b32a32_sfloat"sv;
+  default:
+    throw unimplemented_error{};
   }
 }
 

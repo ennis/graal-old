@@ -92,10 +92,9 @@ class image_accessor<DataT, Type, Target, AccessMode, false> {
   static_assert(is_image_target(Target), "invalid target for image_accessor");
 
 public:
-  image_accessor(image<Type, false> &img, scheduler &sched)
+  image_accessor(image<Type, false> &img, handler &h)
       : virt_img_{img.get_virtual_image()} {
-    sched.add_resource_access(img.get_resource_tracker(), AccessMode,
-                              virt_img_);
+    h.add_resource_access(img.get_resource_tracker(), AccessMode, virt_img_);
   }
 
   /// @brief
@@ -121,8 +120,8 @@ class image_accessor<DataT, Type, Target, AccessMode, true> {
   static_assert(is_image_target(Target), "invalid target for image_accessor");
 
 public:
-  image_accessor(image<Type, true> &img, scheduler &sched) : image_{img} {
-    sched.add_resource_access(img.get_resource_tracker(), AccessMode);
+  image_accessor(image<Type, true> &img, handler &h) : image_{img} {
+    h.add_resource_access(img.get_resource_tracker(), AccessMode);
   }
 
   /// @brief
@@ -179,9 +178,8 @@ public:
   using base_t = detail::image_accessor<void, Type, target::sampled_image,
                                         AccessMode, ExternalAccess>;
 
-  accessor(image<Type, ExternalAccess> &image, sampled_image_tag_t,
-           scheduler &                  sched)
-      : base_t{image, sched} {}
+  accessor(image<Type, ExternalAccess> &image, sampled_image_tag_t, handler &h)
+      : base_t{image, h} {}
 };
 
 //-----------------------------------------------------------------------------
@@ -195,13 +193,12 @@ public:
       detail::image_accessor<void, Type, target::framebuffer_attachment,
                              AccessMode, ExternalAccess>;
 
-  accessor(image<Type, ExternalAccess> &image, storage_image_tag_t,
-           scheduler &                  sched)
-      : base_t{image, sched} {}
+  accessor(image<Type, ExternalAccess> &image, storage_image_tag_t, handler &h)
+      : base_t{image, h} {}
 
   accessor(image<Type, ExternalAccess> &image, storage_image_tag_t,
-           mode_tag_t<AccessMode>, scheduler &sched)
-      : base_t{image, sched} {}
+           mode_tag_t<AccessMode>, handler &h)
+      : base_t{image, h} {}
 };
 
 //-----------------------------------------------------------------------------
@@ -219,23 +216,23 @@ public:
                              AccessMode, ExternalAccess>;
 
   accessor(image<Type, ExternalAccess> &img, framebuffer_attachment_tag_t,
-           scheduler &                  sched)
-      : base_t{img, sched} {}
+           handler &                    h)
+      : base_t{img, h} {}
 
   // framebuffer_attachment, discard (implies write-only)
   accessor(image<Type, ExternalAccess> &img, framebuffer_attachment_tag_t,
-           framebuffer_load_op_discard_t, scheduler &sched)
-      : base_t{img, sched} {}
+           framebuffer_load_op_discard_t, handler &h)
+      : base_t{img, h} {}
 
   // framebuffer_attachment, keep (implies read-write)
   accessor(image<Type, ExternalAccess> &img, framebuffer_attachment_tag_t,
-           framebuffer_load_op_keep_t, scheduler &sched)
-      : base_t{img, sched} {}
+           framebuffer_load_op_keep_t, handler &h)
+      : base_t{img, h} {}
 
   // framebuffer_attachment, clear (implies write-only)
   accessor(image<Type, ExternalAccess> &img, framebuffer_attachment_tag_t,
-           framebuffer_load_op_clear_t clear_color, scheduler &sched)
-      : base_t{img, sched} {}
+           framebuffer_load_op_clear_t clear_color, handler &h)
+      : base_t{img, h} {}
 };
 
 //-----------------------------------------------------------------------------
@@ -248,8 +245,8 @@ class accessor<void, Type, target::pixel_transfer_destination,
                                     access_mode::write_only, ExternalAccess> {
 public:
   accessor(const image<Type, ExternalAccess> &img, pixel_transfer_destination_t,
-           scheduler &                        sched)
-      : detail::image_accessor{img, sched} {}
+           handler &                          h)
+      : detail::image_accessor{img, h} {}
 
   /*// TODO maybe find a safer way to specify the format of the data?
   void upload_image_data(const range<Dimensions> &offset,
@@ -265,32 +262,32 @@ public:
 // clang-format off
 
 // --- sampled image ---
-template <image_type D, bool Ext> accessor(const image<D, Ext>&, sampled_image_tag_t, scheduler&)
+template <image_type D, bool Ext> accessor(const image<D, Ext>&, sampled_image_tag_t, handler&)
     -> accessor<void, D, target::sampled_image, access_mode::read_only, Ext>;
 
 
 // --- storage image ---
-template <image_type D, bool Ext, access_mode AccessMode> accessor(image<D, Ext>&, storage_image_tag_t, mode_tag_t<AccessMode>, scheduler&)
+template <image_type D, bool Ext, access_mode AccessMode> accessor(image<D, Ext>&, storage_image_tag_t, mode_tag_t<AccessMode>, handler&)
     -> accessor<void, D, target::storage_image, AccessMode, Ext>;
 
 // --- framebuffer attachment ---
-template <image_type D, bool Ext> accessor(image<D, Ext>&, framebuffer_attachment_tag_t, scheduler&)
+template <image_type D, bool Ext> accessor(image<D, Ext>&, framebuffer_attachment_tag_t, handler&)
     -> accessor<void, D, target::framebuffer_attachment, access_mode::read_write, Ext>;
 
-template <image_type D, bool Ext> accessor(image<D, Ext>&, framebuffer_attachment_tag_t, framebuffer_load_op_keep_t, scheduler&)
+template <image_type D, bool Ext> accessor(image<D, Ext>&, framebuffer_attachment_tag_t, framebuffer_load_op_keep_t, handler&)
     -> accessor<void, D, target::framebuffer_attachment, access_mode::read_write, Ext>;
 
-template <image_type D, bool Ext> accessor(image<D, Ext>&, framebuffer_attachment_tag_t, framebuffer_load_op_discard_t, scheduler&)
+template <image_type D, bool Ext> accessor(image<D, Ext>&, framebuffer_attachment_tag_t, framebuffer_load_op_discard_t, handler&)
     -> accessor<void, D, target::framebuffer_attachment, access_mode::write_only, Ext>;
 
-template <image_type D, bool Ext> accessor(image<D, Ext>&, framebuffer_attachment_tag_t, framebuffer_load_op_clear_t, scheduler&)
+template <image_type D, bool Ext> accessor(image<D, Ext>&, framebuffer_attachment_tag_t, framebuffer_load_op_clear_t, handler&)
     -> accessor<void, D, target::framebuffer_attachment, access_mode::write_only, Ext>;
 
 // --- pixel transfer ---
-template <image_type D, bool Ext> accessor(image<D, Ext>&, pixel_transfer_destination_t, scheduler&)
+template <image_type D, bool Ext> accessor(image<D, Ext>&, pixel_transfer_destination_t, handler&)
     -> accessor<void, D, target::pixel_transfer_destination, access_mode::write_only, Ext>;
 
-template <image_type D, bool Ext> accessor(image<D, Ext>&, pixel_transfer_source_t, scheduler&)
+template <image_type D, bool Ext> accessor(image<D, Ext>&, pixel_transfer_source_t, handler&)
     -> accessor<void, D, target::pixel_transfer_source, access_mode::read_only, Ext>;
 
 // clang-format on

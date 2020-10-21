@@ -2,6 +2,7 @@
 #include <graal/detail/virtual_resource.hpp>
 #include <string>
 #include <vector>
+#include <functional>
 
 namespace graal::detail {
 
@@ -13,6 +14,8 @@ inline constexpr task_index invalid_task_index = (std::size_t)-1;
 using batch_index = std::size_t;
 inline constexpr batch_index invalid_batch_index = (std::size_t)-1;
 
+using task_callback_fn = void();
+
 struct task {
   void add_read(temporary_index r);
   void add_write(temporary_index w);
@@ -22,6 +25,7 @@ struct task {
   std::vector<temporary_index> writes;
   std::vector<task_index>      preds;
   std::vector<task_index>      succs;
+  std::vector<std::function<task_callback_fn>> callbacks;
 };
 
 /// @brief Used to track the last producer when using a resource in a queue.

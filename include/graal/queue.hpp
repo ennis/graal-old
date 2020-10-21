@@ -21,11 +21,11 @@
 namespace graal {
 
 namespace detail {
-
 class queue_impl;
 } // namespace detail
 
-class scheduler {
+/// @brief Command handler.
+class handler {
   friend class detail::queue_impl;
   template <typename, image_type, target, access_mode, bool>
   friend class accessor;
@@ -38,9 +38,16 @@ public:
       detail::resource_tracker &tracker, access_mode mode,
       std::shared_ptr<detail::virtual_resource> virt_res = nullptr);
 
+  /// @brief Adds a callback function that is executed during submission.
+  template <typename F> void add_command(F &&command_callback) {
+    static_assert(std::is_invocable_v<F>,
+                  "command callback has an invalid signature");
+    task_.callbacks.push_back(std::move(command_callback));
+  }
+
 private:
-  scheduler(detail::queue_impl &queue, detail::task &t,
-            detail::task_index task_index, detail::batch_index batch_index)
+  handler(detail::queue_impl &queue, detail::task &t,
+          detail::task_index task_index, detail::batch_index batch_index)
       : queue_{queue}, task_{t}, task_index_{task_index}, batch_index_{
                                                               batch_index} {}
 
@@ -53,17 +60,17 @@ private:
 namespace detail {
 
 class queue_impl {
-  friend class ::graal::scheduler;
+  friend class ::graal::handler;
 
 public:
   template <typename F> void schedule(std::string name, F f) {
     // create task
     task t;
     t.name = std::move(name);
-    task_index ti = pending_tasks_.size();
-    scheduler  sched{*this, t, ti, current_batch_};
+    task_index ti = tasks_.size();
+    handler    sched{*this, t, ti, current_batch_};
     f(sched);
-    pending_tasks_.push_back(std::move(t));
+    tasks_.push_back(std::move(t));
   }
 
   void enqueue_pending_tasks();
@@ -107,7 +114,7 @@ private:
   //
 
   // pending tasks, a.k.a "batch"
-  std::vector<task> pending_tasks_;
+  std::vector<task> tasks_;
   batch_index       current_batch_ = 0;
 };
 
