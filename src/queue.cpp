@@ -165,6 +165,7 @@ void queue_impl::enqueue_pending_tasks() {
   }
 
   // --- print debug information
+#ifdef GRAAL_TRACE_BATCH_SUBMIT
   fmt::print("=== submitting batch #{} ===\n", current_batch_);
 
   fmt::print("Temporaries:\n");
@@ -201,6 +202,7 @@ void queue_impl::enqueue_pending_tasks() {
     }
     task_index++;
   }
+#endif
 
   // --- start perf timer for submission
   namespace chrono = std::chrono;
@@ -333,7 +335,9 @@ void queue_impl::enqueue_pending_tasks() {
     // assign a concrete resource to each virtual resource of this task
     for (size_t t0 = 0; t0 < num_temporaries; ++t0) {
       if (gen[t0]) {
+#ifdef GRAAL_TRACE_BATCH_SUBMIT
         fmt::print("{:02d}: Live({})", i, temporaries_[t0]->name());
+#endif
         auto &tmp0 = temporaries_[t0];
         // resource became alive, if possible, alias with a dead temporary,
         // otherwise allocate a new one.
@@ -345,12 +349,13 @@ void queue_impl::enqueue_pending_tasks() {
           if (!dead[t1])
             continue;
 
-          // filter out dead resources still used on parallel branches
-          // auto kt = kill_task[t1];
-          // if (!reachability[i][kt] && !reachability[kt][i])
-          //  continue;
-
+            // filter out dead resources still used on parallel branches
+            // auto kt = kill_task[t1];
+            // if (!reachability[i][kt] && !reachability[kt][i])
+            //  continue;
+#ifdef GRAAL_TRACE_BATCH_SUBMIT
           fmt::print(" | {}", temporaries_[t1]->name());
+#endif
 
           // resource is dead, and not on a parallel branch
           // now check that it is compatible
@@ -365,7 +370,10 @@ void queue_impl::enqueue_pending_tasks() {
           }
           // otherwise continue
         }
+
+#ifdef GRAAL_TRACE_BATCH_SUBMIT
         fmt::print("\n");
+#endif
         if (!aliased) {
           // we could not find a resource to alias with, allocate a new one
           tmp0->allocate();
@@ -379,12 +387,21 @@ void queue_impl::enqueue_pending_tasks() {
     // to the same GPU texture, except in some circumstances which are better
     // dealt with explicitly anyway).
     dead |= kill;
+
+    // for (size_t t = 0; t < num_temporaries; ++t) {
+    //  if (kill[t]) {
+    // kill_task[t] = i;
+    // }
+    // }
+
+#ifdef GRAAL_TRACE_BATCH_SUBMIT
     for (size_t t = 0; t < num_temporaries; ++t) {
       if (kill[t]) {
         fmt::print("{:02d}: Kill({})\n", i, temporaries_[t]->name());
         // kill_task[t] = i;
       }
     }
+#endif
 
     // update live
     live -= kill;
@@ -394,6 +411,7 @@ void queue_impl::enqueue_pending_tasks() {
   const auto stop = chrono::high_resolution_clock::now();
   const auto us = chrono::duration_cast<chrono::microseconds>(stop - start);
 
+#ifdef GRAAL_TRACE_BATCH_SUBMIT
   fmt::print("submission took {}us\n", us.count());
   /*for (size_t t = 0; t < num_tasks; ++t) {
     fmt::print("live set for task #{}:", t);
@@ -411,6 +429,7 @@ void queue_impl::enqueue_pending_tasks() {
                                std::ios::trunc};
     dump_tasks(out_graphviz, tasks_, temporaries_, live_sets);
   }
+#endif
 
   // --- 3. submit tasks
   for (size_t i = 0; i < num_tasks; ++i) {

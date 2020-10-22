@@ -66,7 +66,9 @@ add_library (graal STATIC ${SOURCES} ${HEADERS})
 target_include_directories(graal PRIVATE "src")
 target_include_directories(graal PUBLIC "include")
 #target_compile_features(graal PUBLIC cxx_std_17)
-target_compile_definitions(graal PRIVATE GRAAL_TRACE_RESOURCES)
+target_compile_definitions(graal PRIVATE 
+	GRAAL_TRACE_RESOURCES 
+	GRAAL_TRACE_BATCH_SUBMIT)
 target_compile_options(graal PUBLIC /permissive- /std:c++latest)
 target_link_libraries(graal 
 	PUBLIC 
