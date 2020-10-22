@@ -41,7 +41,7 @@ set(HEADERS
  "include/graal/allow_flags.hpp" 
  "include/graal/flags.hpp" 
  "include/graal/flagsfwd.hpp"
- "include/graal/flags_iterator.hpp")
+ "include/graal/flags_iterator.hpp" "include/graal/vertex_array.hpp" "include/graal/data_type.hpp" "include/graal/sampler.hpp")
 
 set(SOURCES
 	"src/queue.cpp" 
@@ -58,14 +58,14 @@ set(SOURCES
 	 "src/detail/image_resource.cpp"
 	 "src/detail/virtual_resource.cpp" 
 	 "src/raw_buffer.cpp" 
-	 "src/program.cpp")
+	 "src/program.cpp" "src/vertex_array.cpp")
 
 # Add source to this project's executable.
 add_library (graal STATIC ${SOURCES} ${HEADERS})
 
 target_include_directories(graal PRIVATE "src")
 target_include_directories(graal PUBLIC "include")
-#target_compile_features(graal PUBLIC cxx_std_17)
+target_compile_features(graal PUBLIC cxx_std_20)
 target_compile_definitions(graal PRIVATE 
 	GRAAL_TRACE_RESOURCES 
 	GRAAL_TRACE_BATCH_SUBMIT)

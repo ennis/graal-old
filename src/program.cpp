@@ -13,7 +13,7 @@ namespace {
 bool link_program(GLuint prog, std::ostream &link_log) {
   glLinkProgram(prog);
 
-  // retrive log
+  // retrieve log
   GLint logsize = 0;
   glGetProgramiv(prog, GL_INFO_LOG_LENGTH, &logsize);
   std::string logbuf;
@@ -37,7 +37,8 @@ bool link_program(GLuint prog, std::ostream &link_log) {
 program_handle create_program(GLuint vertex_shader, GLuint fragment_shader,
                               GLuint tess_control_shader,
                               GLuint tess_eval_shader, GLuint geometry_shader,
-                              std::ostream &link_log) {
+                              std::ostream &link_log) 
+{
   GLuint prog = glCreateProgram();
 
   assert(vertex_shader);

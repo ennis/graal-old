@@ -29,7 +29,7 @@ shader_handle create_shader(shader_stage stage, std::string_view source,
   glGetShaderiv(obj, GL_COMPILE_STATUS, &status);
   if (status != GL_TRUE) {
     glDeleteShader(obj);
-    throw shader_compilation_error{std::move(logbuf)};
+    throw shader_compilation_error{stage, std::move(logbuf)};
   }
 
   return shader_handle{obj};

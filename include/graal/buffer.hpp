@@ -1,8 +1,9 @@
 #pragma once
 #include <graal/detail/virtual_resource.hpp>
-#include <graal/raw_buffer.hpp>
 #include <graal/glad.h>
+#include <graal/raw_buffer.hpp>
 #include <memory>
+#include <span>
 #include <stdexcept>
 
 namespace graal {
@@ -36,9 +37,11 @@ template <typename T, bool ExternalAccess> class buffer_impl;
 // buffer_impl<ExternalAccess=false>
 template <typename T> class buffer_impl<T, false> : public buffer_impl_base<T> {
 public:
-  buffer_impl(std::size_t size) {
-    // TODO
-  }
+  // construct with unspecified size
+  buffer_impl() {}
+
+  // construct uninitialized with size
+  buffer_impl(std::size_t size) { buffer_impl_base<T>::set_size(size); }
 
   std::shared_ptr<virtual_buffer_resource> get_virtual_buffer() {
     if (!virt_buffer_) {
@@ -57,8 +60,19 @@ private:
 // buffer_impl<ExternalAccess=true>
 template <typename T> class buffer_impl<T, true> : public buffer_impl_base<T> {
 public:
-  buffer_impl(std::size_t size) {
-    // TODO
+  // construct with unspecified size
+  buffer_impl() {}
+
+  // construct uninitialized from size
+  buffer_impl(std::size_t size) { buffer_impl_base<T>::set_size(size); }
+
+  // construct with initial data
+  template <size_t Extent> buffer_impl(std::span<const T, Extent> data) {
+    buffer_impl_base<T>::set_size(data.size());
+    auto size_bytes = data.size_bytes();
+    buffer_ = create_buffer(size_bytes, data.data(),
+                            GL_DYNAMIC_STORAGE_BIT | GL_MAP_READ_BIT |
+                                GL_MAP_WRITE_BIT);
   }
 
   GLuint get_gl_object() const {
@@ -67,14 +81,10 @@ public:
       auto s = buffer_impl_base<T>::size() * sizeof(T);
       // TODO infer flags from accesses, or specify dynamically
       buffer_ = create_buffer(s, nullptr,
-                                  GL_DYNAMIC_STORAGE_BIT | GL_MAP_READ_BIT |
-                                      GL_MAP_WRITE_BIT);
+                              GL_DYNAMIC_STORAGE_BIT | GL_MAP_READ_BIT |
+                                  GL_MAP_WRITE_BIT);
     }
 
-    /*if (sync) {
-        //
-    }
-    */
     return buffer_.get();
   }
 
@@ -95,17 +105,23 @@ private:
 /// @tparam T
 template <typename T, bool ExternalAccess = true> class buffer {
 public:
+  using impl_t = detail::buffer_impl<T, ExternalAccess>;
   /// @brief
-  buffer() : impl_{std::make_shared<detail::buffer_impl>()} {}
+  buffer() : impl_{std::make_shared<impl_t>()} {}
 
   /// @brief
   /// @param size
-  buffer(std::size_t size)
-      : impl_{std::make_shared<detail::buffer_impl>(size)} {}
+  buffer(std::size_t size) : impl_{std::make_shared<impl_t>(size)} {}
+
+  /// @brief
+  /// @param data
+  template <size_t Extent>
+  buffer(std::span<const T, Extent> data)
+      : impl_{std::make_shared<impl_t>(data)} {}
 
   /// @brief
   /// @param size
-  void specify_size(std::size_t size) { impl_->specify_size(size); }
+  void set_size(std::size_t size) { impl_->set_size(size); }
 
   /// @brief
   /// @return
@@ -113,7 +129,7 @@ public:
 
   /// @brief
   /// @return
-  bool has_size() const { return impl_->has_size(); }
+  bool has_size() const noexcept { return impl_->has_size(); }
 
   /// @brief
   /// @return
@@ -123,7 +139,12 @@ public:
   }
 
 private:
-  std::shared_ptr<detail::buffer_impl<T, ExternalAccess>> impl_;
+  std::shared_ptr<impl_t> impl_;
 };
+
+template <typename T> using virtual_buffer = buffer<T, false>;
+
+// deduction guides
+template <typename T> buffer(std::span<const T>) -> buffer<T, true>;
 
 } // namespace graal

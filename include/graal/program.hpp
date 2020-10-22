@@ -1,4 +1,5 @@
 #pragma once
+#include <exception>
 #include <graal/detail/gl_handle.hpp>
 #include <graal/glad.h>
 #include <iosfwd>
@@ -9,6 +10,17 @@ struct program_deleter {
   void operator()(GLuint shader_obj) const noexcept {
     glDeleteProgram(shader_obj);
   }
+};
+
+/// @brief Thrown on program link error.
+class program_link_error : public std::exception {
+public:
+  program_link_error(std::string log) : log_{std::move(log)} {}
+
+  std::string_view log() const noexcept { return log_; }
+
+private:
+  std::string log_;
 };
 
 using program_handle = detail::gl_handle<program_deleter>;
