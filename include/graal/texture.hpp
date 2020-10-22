@@ -1,14 +1,15 @@
 #pragma once
-#include "handle.hpp"
+#include <graal/detail/gl_handle.hpp>
 #include <graal/image_format.hpp>
+#include <graal/gl_types.hpp>
 
-namespace graal::gl {
+namespace graal {
 
 struct texture_deleter {
-  void operator()(GLuint tex_obj);
+  void operator()(GLuint tex_obj) const noexcept;
 };
 
-using texture_handle = handle<texture_deleter>;
+using texture_handle = detail::gl_handle<texture_deleter>;
 
 [[nodiscard]] texture_handle create_texture_1d(GLenum       target,
                                                image_format format,

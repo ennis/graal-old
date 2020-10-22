@@ -1,7 +1,7 @@
 #pragma once
 #include <graal/detail/virtual_resource.hpp>
-#include <graal/gl/buffer.hpp>
-#include <graal/gl/glad.h>
+#include <graal/raw_buffer.hpp>
+#include <graal/glad.h>
 #include <memory>
 #include <stdexcept>
 
@@ -66,7 +66,7 @@ public:
       // no object allocated yet, allocate now
       auto s = buffer_impl_base<T>::size() * sizeof(T);
       // TODO infer flags from accesses, or specify dynamically
-      buffer_ = gl::create_buffer(s, nullptr,
+      buffer_ = create_buffer(s, nullptr,
                                   GL_DYNAMIC_STORAGE_BIT | GL_MAP_READ_BIT |
                                       GL_MAP_WRITE_BIT);
     }
@@ -86,7 +86,7 @@ public:
 
 private:
   // queue queue_;
-  gl::buffer_handle buffer_;
+  buffer_handle buffer_;
 };
 
 } // namespace detail

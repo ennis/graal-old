@@ -1,7 +1,7 @@
 #pragma once
-#include <graal/gl/glad.h>
+#include <graal/glad.h>
 
-namespace graal::gl {
+namespace graal {
 
 enum class debug_source : GLenum { application, third_party };
 
@@ -22,7 +22,7 @@ enum class severity {
 };
 
 void setup_debug_output();
-//void push_debug_group(std::string_view group_name);
-//void pop_debug_group();
+// void push_debug_group(std::string_view group_name);
+// void pop_debug_group();
 
-} // namespace graal::gl
+} // namespace graal

@@ -83,7 +83,7 @@
 #endif
 
 // GL includes
-#include <graal/gl/glad.h>
+#include <graal/glad.h>
 
 // Desktop GL 3.2+ has glDrawElementsBaseVertex() which GL ES and WebGL don't have.
 #if !defined(IMGUI_IMPL_OPENGL_ES2) && !defined(IMGUI_IMPL_OPENGL_ES3) && defined(GL_VERSION_3_2)

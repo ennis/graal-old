@@ -1,6 +1,6 @@
-#include <graal/gl/buffer.hpp>
+#include <graal/raw_buffer.hpp>
 
-namespace graal::gl {
+namespace graal {
 
 buffer_handle create_buffer(size_t size, const void *data, GLbitfield flags) {
   GLuint obj = 0;

@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <boost/dynamic_bitset.hpp>
 #include <boost/functional/hash.hpp>
 #include <chrono>
 #include <fmt/format.h>
@@ -7,7 +8,6 @@
 #include <numeric>
 #include <span>
 #include <unordered_set>
-#include <boost/dynamic_bitset.hpp>
 
 namespace graal {
 namespace detail {
@@ -219,11 +219,11 @@ void queue_impl::enqueue_pending_tasks() {
   //
   // When computing liveness of virtual resources, we must also take into
   // account the fact that tasks without data dependencies between them could be
-  // run in parallel. Otherwise, we could alias the same resource to two
-  // potentially parallel tasks, forcing serial execution ("false dependency")
-  // and reducing performance.
-  // Since we keep track of data dependencies between tasks during construction
-  // of the task list, we can determine which tasks can be run in parallel.
+  // run in parallel. Otherwise, we may alias the same resource to two
+  // potentially parallel tasks, creating a false dependency that forces serial
+  // execution and may reduce performance. Since we keep track of data
+  // dependencies between tasks during construction of the task list, we can
+  // determine which tasks can be run in parallel.
 
   // --- 1. Compute the transitive closure of the task graph, which tells us
   // whether there's a path between two tasks in the graph.
@@ -241,7 +241,8 @@ void queue_impl::enqueue_pending_tasks() {
     }
   }
 
-  // --- 2. submit tasks, keeping track of live and dead temporaries on the fly
+  // --- 2. allocate resources for temporaries, keeping track of live and dead
+  // temporaries on the fly
   std::vector<variable_set> live_sets; // live-sets for each task
   std::vector<variable_set> use;       // use-sets for each task
   std::vector<variable_set> def;       // def-sets for each task
@@ -409,6 +410,13 @@ void queue_impl::enqueue_pending_tasks() {
     std::ofstream out_graphviz{fmt::format("graal_test_{}.dot", current_batch_),
                                std::ios::trunc};
     dump_tasks(out_graphviz, tasks_, temporaries_, live_sets);
+  }
+
+  // --- 3. submit tasks
+  for (size_t i = 0; i < num_tasks; ++i) {
+    for (auto &&cmd : tasks_[i].callbacks) {
+      cmd();
+    }
   }
 
   // reset temporary indices that were assigned during queuing.

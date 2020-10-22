@@ -1,12 +1,12 @@
 #pragma once
-#include <graal/gl/glad.h>
+#include <graal/glad.h>
 #include <graal/image_format.hpp>
 #include <stdexcept>
 
-namespace graal::gl {
+namespace graal {
 
 /// @brief
-struct format_info {
+struct gl_format_info {
   GLenum internal_format; ///< Corresponding internal format
   GLenum external_format; ///< Preferred external format for uploads/reads
   GLenum type;            ///< Preferred element type for uploads/reads
@@ -18,7 +18,7 @@ struct format_info {
 /// the specified Format
 /// @param fmt
 /// @return
-inline constexpr format_info get_format_info(image_format fmt) {
+inline constexpr gl_format_info get_gl_format_info(image_format fmt) {
   // clang-format off
   switch (fmt) {
     case image_format::r8g8b8a8_unorm: return { GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, 4, 4 };

@@ -1,6 +1,6 @@
 ﻿#include <graal/accessor.hpp>
-#include <graal/gl/debug_output.hpp>
-#include <graal/gl/glad.h>
+#include <graal/debug_output.hpp>
+#include <graal/glad.h>
 #include <graal/image.hpp>
 #include <graal/queue.hpp>
 
@@ -50,7 +50,7 @@ int main() {
   glfwMakeContextCurrent(window);
 
   gladLoadGL();
-  gl::setup_debug_output();
+  setup_debug_output();
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
   ImGuiIO &io = ImGui::GetIO();

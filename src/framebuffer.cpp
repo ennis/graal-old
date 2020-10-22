@@ -2,7 +2,7 @@
 #include <graal/gpu/glad.h>
 #include <graal/gpu/image.hpp>
 
-namespace graal::gpu {
+namespace graal {
 
 void RenderbufferDeleter::operator()(GLuint rb) {
   glDeleteRenderbuffers(1, &rb);

@@ -19,4 +19,7 @@ TODO
 ### What it means
 Graphics Resource Aliasing Abstraction Layer, but don't look too much into it.
 
+### Credits
+- This software uses a modified version of https://github.com/grisumbras/enum-flags. See ext/flags/LICENSE.
+
 [1]: https://www.khronos.org/sycl/

@@ -9,7 +9,7 @@
 #include <graal/detail/task.hpp>
 #include <graal/detail/virtual_resource.hpp>
 #include <graal/errors.hpp>
-#include <graal/gl/texture.hpp>
+#include <graal/texture.hpp>
 #include <graal/image_format.hpp>
 #include <graal/image_type.hpp>
 #include <graal/queue.hpp>

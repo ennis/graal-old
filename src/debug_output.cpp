@@ -1,8 +1,8 @@
 #pragma once
-#include <graal/gl/glad.h>
+#include <graal/glad.h>
 #include <fmt/core.h>
 
-namespace graal::gl {
+namespace graal {
 
 namespace {
 void APIENTRY debug_callback(GLenum source, GLenum type, GLuint id,

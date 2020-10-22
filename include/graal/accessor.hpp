@@ -4,6 +4,7 @@
 #include <graal/image_type.hpp>
 #include <graal/queue.hpp>
 #include <type_traits>
+#include <cassert>
 
 namespace graal {
 
@@ -99,15 +100,24 @@ public:
 
   /// @brief
   /// @return
-  GLuint get_gl_object() const { throw unimplemented_error{}; }
+  GLuint get_gl_object() const { 
+      // TODO
+      assert(false); 
+  }
 
   /// @brief
   /// @return
-  image_size<Type> size() const { throw unimplemented_error{}; }
+  image_size<Type> size() const {
+      // TODO
+      assert(false);
+  }
 
   /// @brief
   /// @return
-  image_format format() const { throw unimplemented_error{}; }
+  image_format format() const {
+      // TODO
+      assert(false);
+  }
 
 private:
   std::shared_ptr<detail::virtual_image_resource> virt_img_;

@@ -1,5 +1,5 @@
 #pragma once
-#include <graal/gl/texture.hpp>
+#include <graal/texture.hpp>
 #include <graal/image_format.hpp>
 #include <graal/image_type.hpp>
 #include <graal/range.hpp>
@@ -48,7 +48,7 @@ public:
   [[nodiscard]] GLuint get_gl_object() const { return tex_.get(); }
 
 private:
-  gl::texture_handle tex_;
+  texture_handle tex_;
   image_desc         desc_;
 };
 
