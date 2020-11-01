@@ -1,7 +1,7 @@
 #pragma once
 
 #include "allow_flags.hpp"
-#include "iterator.hpp"
+#include "flags_iterator.hpp"
 
 #include <bitset>
 #include <initializer_list>
@@ -257,18 +257,18 @@ template <class E> void swap(flags<E> &fl1, flags<E> &fl2) noexcept {
 
 template <class E>
 constexpr auto operator|(E e1, E e2) noexcept ->
-    typename std::enable_if<flags::is_flags<E>::value, flags::flags<E>>::type {
-  return flags::flags<E>(e1) | e2;
+    typename std::enable_if<graal::is_flags<E>::value, graal::flags<E>>::type {
+  return graal::flags<E>(e1) | e2;
 }
 
 template <class E>
 constexpr auto operator&(E e1, E e2) noexcept ->
-    typename std::enable_if<flags::is_flags<E>::value, flags::flags<E>>::type {
-  return flags::flags<E>(e1) & e2;
+    typename std::enable_if<graal::is_flags<E>::value, graal::flags<E>>::type {
+  return graal::flags<E>(e1) & e2;
 }
 
 template <class E>
 constexpr auto operator^(E e1, E e2) noexcept ->
-    typename std::enable_if<flags::is_flags<E>::value, flags::flags<E>>::type {
-  return flags::flags<E>(e1) ^ e2;
+    typename std::enable_if<graal::is_flags<E>::value, graal::flags<E>>::type {
+  return graal::flags<E>(e1) ^ e2;
 }

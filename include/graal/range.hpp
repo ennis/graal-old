@@ -1,6 +1,7 @@
 #pragma once
 #include <array>
 #include <type_traits>
+#include <vulkan/vulkan.hpp>
 
 namespace graal {
 
@@ -29,7 +30,7 @@ template <int Dimensions> struct range {
   }
   constexpr size_t &operator[](size_t index) noexcept { return arr[index]; }
 
-  constexpr bool operator==(const range<Dimensions> &rhs) const {
+  constexpr bool operator==(const range<Dimensions> &rhs) const noexcept {
     for (int i = 0; i < Dimensions; ++i) {
       if (arr[i] != rhs.arr[i]) {
         return false;
@@ -38,7 +39,7 @@ template <int Dimensions> struct range {
     return true;
   }
 
-  constexpr bool operator!=(const range<Dimensions> &rhs) const {
+  constexpr bool operator!=(const range<Dimensions> &rhs) const noexcept {
     for (int i = 0; i < Dimensions; ++i) {
       if (arr[i] != rhs.arr[i]) {
         return true;
@@ -58,5 +59,34 @@ range(size_t, size_t, size_t)->range<3>;
 using range_1d = range<1>;
 using range_2d = range<2>;
 using range_3d = range<3>;
+
+// conversions to VkExtent
+
+[[nodiscard]] constexpr inline vk::Extent3D
+to_vk_extent_3d(const range<1> &range) noexcept {
+  vk::Extent3D e;
+  e.width = (uint32_t)range[0];
+  e.height = 1;
+  e.depth = 1;
+  return e;
+}
+
+[[nodiscard]] constexpr inline vk::Extent3D
+to_vk_extent_3d(const range<2> &range) noexcept {
+  vk::Extent3D e;
+  e.width = (uint32_t)range[0];
+  e.height = (uint32_t)range[1];
+  e.depth = 1;
+  return e;
+}
+
+[[nodiscard]] constexpr inline vk::Extent3D
+to_vk_extent_3d(const range<3> &range) noexcept {
+  vk::Extent3D e;
+  e.width = (uint32_t)range[0];
+  e.height = (uint32_t)range[1];
+  e.depth = (uint32_t)range[2];
+  return e;
+}
 
 } // namespace graal

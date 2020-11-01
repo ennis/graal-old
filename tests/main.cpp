@@ -1,4 +1,4 @@
-﻿#include <graal/accessor.hpp>
+﻿//#include <graal/accessor.hpp>
 #include <graal/buffer.hpp>
 #include <graal/debug_output.hpp>
 #include <graal/glad.h>
@@ -8,11 +8,17 @@
 #include <graal/shader.hpp>
 #include <graal/vertex_array.hpp>
 
+#include <graal/ext/vertex_array_cache.hpp>
+#include <graal/ext/vertex_traits.hpp>
+#include <vulkan/vulkan.hpp>
+
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 #include <GLFW/glfw3.h>
 
+#include <array>
+#include <bit>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -29,9 +35,9 @@ using namespace graal;
   image NAME{virtual_image, image_format::r16g16_sfloat, range{1280, 720}};    \
   NAME.set_name(#NAME);
 
-#define READ(img) accessor read_##img{img, sampled_image, h};
-#define DRAW(img) accessor draw_##img{img, framebuffer_attachment, h};
-#define WRITE(img) accessor draw_##img{img, framebuffer_attachment, discard, h};
+#define READ(img) h.add_image_access(img, access_mode::read_only, image_usage::sampled_image);
+#define DRAW(img)  h.add_image_access(img, access_mode::read_write, image_usage::color_attachment);
+#define WRITE(img) h.add_image_access(img, access_mode::write_only, image_usage::storage_image);
 
 void test_case_1(graal::queue &q);
 void test_case_2(graal::queue &q);
@@ -57,8 +63,6 @@ static std::string read_text_file(std::string_view path) {
   return source;
 }
 
-template <typename T> struct vertex_traits;
-
 struct vertex_2d {
   std::array<float, 2> pos;
   std::array<float, 2> tex;
@@ -68,34 +72,6 @@ template <> struct vertex_traits<vertex_2d> {
   static constexpr vertex_attribute attributes[] = {
       {data_type::float_, 2, offsetof(vertex_2d, pos)},
       {data_type::float_, 2, offsetof(vertex_2d, tex)}};
-};
-
-class vertex_array_cache {
-public:
-  template <typename VertexType> std::shared_ptr<vertex_array_handle> get() {
-    static_assert(std::is_standard_layout_v<VertexType>,
-                  "VertexType must be standard-layout");
-    const type_index vtx_type_index{typeid(VertexType)};
-    if (auto it = vertex_arrays_.find(vtx_type_index);
-        it != vertex_arrays_.end()) {
-      return it->second;
-    } else {
-      vertex_array_builder vao_builder;
-      vao_builder.set_attributes(0, 0, vertex_traits<VertexType>::attributes);
-      auto vao =
-          std::make_shared<vertex_array_handle>(vao_builder.get_vertex_array());
-      vertex_arrays_.insert({vtx_type_index, std::move(vao)});
-    }
-  }
-
-  static vertex_array_cache &global_cache() noexcept {
-    static vertex_array_cache instance;
-    return instance;
-  }
-
-private:
-  std::unordered_map<std::type_index, std::shared_ptr<vertex_array_handle>>
-      vertex_arrays_;
 };
 
 /// @brief Application state
@@ -156,7 +132,7 @@ public:
 
   void render(queue &q) {
     q.schedule("background render", [](handler &h) {
-
+      // accessors here
     });
   }
 
@@ -165,6 +141,16 @@ private:
   vertex_array_handle vao;
   program_handle      bg_program;
 };
+
+
+
+// Creating a resource with vulkan:
+// 1. query memory requirements
+// 2. allocate a device memory block
+// 3. bind memory
+
+// For virtual resources:
+// 1. if aliasing
 
 int main() {
 
@@ -197,7 +183,16 @@ int main() {
   ImGui_ImplOpenGL3_Init("#version 450");
 
   //=======================================================
-  queue q;
+  // Vulkan setup
+
+  uint32_t     glfwExtensionCount = 0;
+  const char **glfwExtensions;
+  glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+
+  device dev{ std::span{glfwExtensions, (size_t)glfwExtensionCount} };
+
+  //=======================================================
+  queue q{ dev };
 
   // ---- Main loop ----
   bool  reload_shaders = true;
@@ -298,7 +293,7 @@ void test_case_1(graal::queue &q) {
   q.schedule("T9", [&](handler &h) { READ(I) READ(G) WRITE(J) });
   q.schedule("T10", [&](handler &h) { READ(J) WRITE(K) });
 
-  A.discard();
+  /*A.discard();
   B.discard();
   C.discard();
   D1.discard();
@@ -308,16 +303,17 @@ void test_case_1(graal::queue &q) {
   G.discard();
   H.discard();
   I.discard();
-  J.discard();
+  J.discard();*/
 
   q.enqueue_pending_tasks();
 
   q.schedule("T10", [&](handler &h) {
-    accessor write_K{K, framebuffer_attachment, discard, h};
+      //color_attachment_accessor write_K{K, discard, h};
+      //sampled_image_accessor sample_I{ I, h };
 
     auto f = [=] {
       // do something with tex
-      auto tex = write_K.get_gl_object();
+      //auto tex = write_K.get_gl_object();
     };
   });
   q.enqueue_pending_tasks();

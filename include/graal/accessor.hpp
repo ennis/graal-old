@@ -1,26 +1,21 @@
 #pragma once
+#include <cassert>
 #include <graal/buffer.hpp>
 #include <graal/image.hpp>
 #include <graal/image_type.hpp>
 #include <graal/queue.hpp>
 #include <type_traits>
-#include <cassert>
 
 namespace graal {
 
 template <access_mode> struct mode_tag_t { explicit mode_tag_t() = default; };
-template <target> struct target_tag_t { explicit target_tag_t() = default; };
-
-template <target, access_mode> struct mode_target_tag_t {
-  explicit mode_target_tag_t() = default;
-};
 
 inline constexpr mode_tag_t<access_mode::read_only>  read_only{};
 inline constexpr mode_tag_t<access_mode::read_write> read_write{};
 inline constexpr mode_tag_t<access_mode::write_only> write_only{};
 
-struct framebuffer_attachment_tag_t {
-  explicit framebuffer_attachment_tag_t() = default;
+struct color_attachment_tag_t {
+  explicit color_attachment_tag_t() = default;
 };
 struct framebuffer_load_op_clear_t {
   explicit constexpr framebuffer_load_op_clear_t(float x)
@@ -39,7 +34,7 @@ struct framebuffer_load_op_discard_t {
   explicit framebuffer_load_op_discard_t() = default;
 };
 
-inline constexpr framebuffer_attachment_tag_t framebuffer_attachment{};
+inline constexpr color_attachment_tag_t framebuffer_attachment{};
 using clear_init = framebuffer_load_op_clear_t;
 inline constexpr framebuffer_load_op_keep_t    keep{};
 inline constexpr framebuffer_load_op_discard_t discard{};
@@ -65,196 +60,151 @@ struct storage_image_tag_t {
 inline constexpr storage_image_tag_t storage_image{};
 
 namespace detail {
-//-----------------------------------------------------
-inline constexpr bool is_image_target(target target) {
-  return target == target::framebuffer_attachment ||
-         target == target::pixel_transfer_source ||
-         target == target::pixel_transfer_destination ||
-         target == target::storage_image || target == target::sampled_image;
-}
-
-inline constexpr bool is_buffer_target(target target) {
-  return target == target::mapped_buffer || target == target::index_buffer ||
-         target == target::vertex_buffer || target == target::uniform_buffer ||
-         target == target::storage_buffer ||
-         target == target::transform_feedback_buffer;
-}
 
 //-----------------------------------------------------
 
-template <typename DataT, image_type Type, target Target,
-          access_mode AccessMode, bool ExternalAccess>
-class image_accessor;
-
-// image_accessor for virtual images
-template <typename DataT, image_type Type, target Target,
-          access_mode AccessMode>
-class image_accessor<DataT, Type, Target, AccessMode, false> {
-  static_assert(is_image_target(Target), "invalid target for image_accessor");
-
+// image_accessor 
+template < 
+    image_type Type, 
+    image_usage Usage,
+    access_mode AccessMode, 
+    bool HostVisible>
+class image_accessor_base
+{
 public:
-  image_accessor(image<Type, false> &img, handler &h)
-      : virt_img_{img.get_virtual_image()} {
-    h.add_resource_access(img.get_resource_tracker(), AccessMode, virt_img_);
-  }
-
-  /// @brief
-  /// @return
-  GLuint get_gl_object() const { 
-      // TODO
-      assert(false); 
+    image_accessor_base(image<Type, false> &img, handler &h) {
+    h.add_image_access(img.impl_, Usage, AccessMode);
   }
 
   /// @brief
   /// @return
   image_size<Type> size() const {
-      // TODO
-      assert(false);
+    // TODO
+    assert(false);
   }
 
   /// @brief
   /// @return
   image_format format() const {
-      // TODO
-      assert(false);
+    // TODO
+    assert(false);
   }
 
 private:
-  std::shared_ptr<detail::virtual_image_resource> virt_img_;
+  std::shared_ptr<detail::image_impl> img_;
 };
 
-// image_accessor for concrete images
-template <typename DataT, image_type Type, target Target,
-          access_mode AccessMode>
-class image_accessor<DataT, Type, Target, AccessMode, true> {
-  static_assert(is_image_target(Target), "invalid target for image_accessor");
-
+template <typename DataT, buffer_usage Usage, access_mode AccessMode>
+class buffer_accessor_base
+{
 public:
-  image_accessor(image<Type, true> &img, handler &h) : image_{img} {
-    h.add_resource_access(img.get_resource_tracker(), AccessMode);
-  }
-
-  /// @brief
-  /// @return
-  GLuint get_gl_object() const { return image_.get_gl_object(); }
-
-  /// @brief
-  /// @return
-  image_size<Type> size() const { return image_.size(); }
-
-  /// @brief
-  /// @return
-  image_format format() const { return image_.format(); }
+    buffer_accessor_base(buffer<DataT, false>& buf, handler& h) {
+        h.add_buffer_access(buf.impl_, Usage, AccessMode);
+    }
 
 private:
-  image<Type, true> image_;
-};
-
-template <typename DataT, target Target, access_mode AccessMode>
-class buffer_accessor {
-  static_assert(is_buffer_target(Target), "invalid target for buffer_accessor");
-
-public:
-  GLuint get_gl_object() const { return buffer_.get_gl_object(); }
-
-private:
-  buffer<DataT> buffer_;
+  std::shared_ptr<detail::buffer_impl> buffer_;
 };
 } // namespace detail
 
 //-----------------------------------------------------------------------------
-/// @brief Primary accessor template
+/// @brief Primary image accessor template
 /// @tparam DataT
-template <typename DataT,
-          image_type  Type,       // image dimensions (1D for buffers)
-          target      Target,     // target
+template <image_type  Type,       // image dimensions (1D for buffers)
+          image_usage      Usage,     // target
           access_mode AccessMode, // access mode (RW/RO/WO)
-          bool ExternalAccess     // false if no external access (virtual), true
-                                  // otherwise
-          >
-class accessor {};
+          bool HostVisible     // true if can be mapped
+>
+class image_accessor {};
 
 // now buffers and images are sufficiently different to warrant two different
 // accessor types?
 
 //-----------------------------------------------------------------------------
-// accessor(sampled_image)
-template <typename DataT, image_type Type, access_mode AccessMode,
-          bool ExternalAccess>
-class accessor<DataT, Type, target::sampled_image, AccessMode, ExternalAccess>
-    : public detail::image_accessor<DataT, Type, target::sampled_image,
-                                    AccessMode, ExternalAccess> {
+// image_accessor(sampled_image)
+template <image_type Type, access_mode AccessMode, bool HostVisible>
+class image_accessor<Type, image_usage::sampled_image, AccessMode, HostVisible>
+    : public detail::image_accessor_base<Type, image_usage::sampled_image,
+                                         AccessMode, HostVisible> {
 public:
-  using base_t = detail::image_accessor<void, Type, target::sampled_image,
-                                        AccessMode, ExternalAccess>;
+  using base_t = detail::image_accessor_base<Type, image_usage::sampled_image,
+                                             AccessMode, HostVisible>;
 
-  accessor(image<Type, ExternalAccess> &image, sampled_image_tag_t, handler &h)
-      : base_t{image, h} {}
+  image_accessor(image<Type, HostVisible> &image, sampled_image_tag_t,
+                 handler &                 h)
+      : base_t{image, h} {
+    image.impl_->add_usage(vk::ImageUsageFlagBits::eSampled);
+  }
 };
 
 //-----------------------------------------------------------------------------
 // accessor<storage_image>
-template <image_type Type, access_mode AccessMode, bool ExternalAccess>
-class accessor<void, Type, target::storage_image, AccessMode, ExternalAccess>
-    : public detail::image_accessor<void, Type, target::storage_image,
-                                    AccessMode, ExternalAccess> {
+template <image_type Type, access_mode AccessMode, bool HostVisible>
+class image_accessor<Type, image_usage::storage_image, AccessMode, HostVisible>
+    : public detail::image_accessor_base<Type, image_usage::storage_image,
+    AccessMode, HostVisible> {
 public:
-  using base_t =
-      detail::image_accessor<void, Type, target::framebuffer_attachment,
-                             AccessMode, ExternalAccess>;
+    using base_t = detail::image_accessor_base<Type, image_usage::storage_image,
+        AccessMode, HostVisible>;
 
-  accessor(image<Type, ExternalAccess> &image, storage_image_tag_t, handler &h)
-      : base_t{image, h} {}
+    image_accessor(image<Type, HostVisible>& image, storage_image_tag_t, handler& h)
+        : base_t{ image, h } 
+    {
+        image.impl_->add_usage(vk::ImageUsageFlagBits::eStorage);
+    }
 
-  accessor(image<Type, ExternalAccess> &image, storage_image_tag_t,
-           mode_tag_t<AccessMode>, handler &h)
-      : base_t{image, h} {}
+    image_accessor(image<Type, HostVisible>& image, storage_image_tag_t,
+        mode_tag_t<AccessMode>, handler& h)
+        : base_t{ image, h } 
+    {
+        image.impl_->add_usage(vk::ImageUsageFlagBits::eStorage);
+    }
 };
 
 //-----------------------------------------------------------------------------
-// accessor<framebuffer_attachment>
-template <image_type Type, access_mode AccessMode, bool ExternalAccess>
-class accessor<void, Type, target::framebuffer_attachment, AccessMode,
-               ExternalAccess>
-    : public detail::image_accessor<void, Type, target::framebuffer_attachment,
-                                    AccessMode, ExternalAccess>
-
+// accessor<color_attachment>
+template <image_type Type, access_mode AccessMode, bool HostVisible>
+class image_accessor<Type, image_usage::color_attachment, AccessMode,
+    HostVisible>
+    : public detail::image_accessor_base<Type, image_usage::color_attachment, AccessMode,
+    HostVisible>
 {
 public:
-  using base_t =
-      detail::image_accessor<void, Type, target::framebuffer_attachment,
-                             AccessMode, ExternalAccess>;
+    using base_t = detail::image_accessor_base<Type, image_usage::color_attachment, AccessMode,
+        HostVisible>;
 
-  accessor(image<Type, ExternalAccess> &img, framebuffer_attachment_tag_t,
-           handler &                    h)
-      : base_t{img, h} {}
+    image_accessor(image<Type, HostVisible>& img, color_attachment_tag_t,
+        handler& h)
+        : base_t{ img, h } 
+    {
+    }
 
-  // framebuffer_attachment, discard (implies write-only)
-  accessor(image<Type, ExternalAccess> &img, framebuffer_attachment_tag_t,
-           framebuffer_load_op_discard_t, handler &h)
-      : base_t{img, h} {}
+    // framebuffer_attachment, discard (implies write-only)
+    image_accessor(image<Type, HostVisible>& img, color_attachment_tag_t,
+        framebuffer_load_op_discard_t, handler& h)
+        : base_t{ img, h } {}
 
-  // framebuffer_attachment, keep (implies read-write)
-  accessor(image<Type, ExternalAccess> &img, framebuffer_attachment_tag_t,
-           framebuffer_load_op_keep_t, handler &h)
-      : base_t{img, h} {}
+    // framebuffer_attachment, keep (implies read-write)
+    image_accessor(image<Type, HostVisible>& img, color_attachment_tag_t,
+        framebuffer_load_op_keep_t, handler& h)
+        : base_t{ img, h } {}
 
-  // framebuffer_attachment, clear (implies write-only)
-  accessor(image<Type, ExternalAccess> &img, framebuffer_attachment_tag_t,
-           framebuffer_load_op_clear_t clear_color, handler &h)
-      : base_t{img, h} {}
+    // framebuffer_attachment, clear (implies write-only)
+    image_accessor(image<Type, HostVisible>& img, color_attachment_tag_t,
+        framebuffer_load_op_clear_t clear_color, handler& h)
+        : base_t{ img, h } {}
 };
 
 //-----------------------------------------------------------------------------
 // accessor<pixel_transfer_destination>
-template <image_type Type, bool ExternalAccess>
+template <image_type Type, bool HostVisible>
 class accessor<void, Type, target::pixel_transfer_destination,
-               access_mode::write_only, ExternalAccess>
+    access_mode::write_only, HostVisible>
     : public detail::image_accessor<void, Type,
-                                    target::pixel_transfer_destination,
-                                    access_mode::write_only, ExternalAccess> {
+    target::pixel_transfer_destination,
+    access_mode::write_only, HostVisible> {
 public:
-  accessor(const image<Type, ExternalAccess> &img, pixel_transfer_destination_t,
+    accessor(const image<Type, HostVisible> &img, pixel_transfer_destination_t,
            handler &                          h)
       : detail::image_accessor{img, h} {}
 
@@ -281,16 +231,16 @@ template <image_type D, bool Ext, access_mode AccessMode> accessor(image<D, Ext>
     -> accessor<void, D, target::storage_image, AccessMode, Ext>;
 
 // --- framebuffer attachment ---
-template <image_type D, bool Ext> accessor(image<D, Ext>&, framebuffer_attachment_tag_t, handler&)
+template <image_type D, bool Ext> accessor(image<D, Ext>&, color_attachment_tag_t, handler&)
     -> accessor<void, D, target::framebuffer_attachment, access_mode::read_write, Ext>;
 
-template <image_type D, bool Ext> accessor(image<D, Ext>&, framebuffer_attachment_tag_t, framebuffer_load_op_keep_t, handler&)
+template <image_type D, bool Ext> accessor(image<D, Ext>&, color_attachment_tag_t, framebuffer_load_op_keep_t, handler&)
     -> accessor<void, D, target::framebuffer_attachment, access_mode::read_write, Ext>;
 
-template <image_type D, bool Ext> accessor(image<D, Ext>&, framebuffer_attachment_tag_t, framebuffer_load_op_discard_t, handler&)
+template <image_type D, bool Ext> accessor(image<D, Ext>&, color_attachment_tag_t, framebuffer_load_op_discard_t, handler&)
     -> accessor<void, D, target::framebuffer_attachment, access_mode::write_only, Ext>;
 
-template <image_type D, bool Ext> accessor(image<D, Ext>&, framebuffer_attachment_tag_t, framebuffer_load_op_clear_t, handler&)
+template <image_type D, bool Ext> accessor(image<D, Ext>&, color_attachment_tag_t, framebuffer_load_op_clear_t, handler&)
     -> accessor<void, D, target::framebuffer_attachment, access_mode::write_only, Ext>;
 
 // --- pixel transfer ---

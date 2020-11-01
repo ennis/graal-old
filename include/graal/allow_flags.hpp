@@ -16,5 +16,3 @@ namespace graal { \
 template <> struct is_flags< name > : std::true_type {}; \
 }
 
-
-#endif // ENUM_CLASS_ALLOW_FLAGS_HPP

@@ -1,10 +1,12 @@
 #pragma once
-#include <graal/detail/virtual_resource.hpp>
+#include <functional>
 #include <string>
 #include <vector>
-#include <functional>
 
 namespace graal::detail {
+
+using temporary_index = std::size_t;
+constexpr temporary_index invalid_temporary_index = (temporary_index)-1;
 
 /// @brief Index of a task in a batch.
 using task_index = std::size_t;
@@ -20,19 +22,12 @@ struct task {
   void add_read(temporary_index r);
   void add_write(temporary_index w);
 
-  std::string                  name;
-  std::vector<temporary_index> reads;
-  std::vector<temporary_index> writes;
-  std::vector<task_index>      preds;
-  std::vector<task_index>      succs;
+  std::string                                  name;
+  std::vector<temporary_index>                 reads;
+  std::vector<temporary_index>                 writes;
+  std::vector<task_index>                      preds;
+  std::vector<task_index>                      succs;
   std::vector<std::function<task_callback_fn>> callbacks;
-};
-
-/// @brief Used to track the last producer when using a resource in a queue.
-struct resource_tracker {
-  // TODO mutex-protected
-  batch_index batch = invalid_batch_index;
-  task_index  last_producer = invalid_task_index;
 };
 
 } // namespace graal::detail

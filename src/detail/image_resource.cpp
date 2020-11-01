@@ -5,7 +5,7 @@
 namespace graal {
 namespace detail {
 
-image_resource::image_resource(const image_desc &desc) : desc_{desc} {
+/*image_resource::image_resource(const image_desc &desc) : desc_{desc} {
   switch (desc_.type) {
   case image_type::image_1d:
     tex_ = create_texture_1d(GL_TEXTURE_1D, desc_.format, desc_.size[0], desc_.num_mipmaps);
@@ -47,7 +47,7 @@ image_resource::image_resource(const image_desc &desc) : desc_{desc} {
   }
 }
 
-image_resource::~image_resource() {}
+image_resource::~image_resource() {}*/
 
 } // namespace detail
 } // namespace graal

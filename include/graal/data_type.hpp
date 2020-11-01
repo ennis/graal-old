@@ -74,7 +74,7 @@ inline constexpr data_type_class get_data_type_class(data_type ty) noexcept {
     case data_type::unorm2_10_10_10_pack32: return data_type_class::unsigned_normalized;
     case data_type::snorm2_10_10_10_pack32: return data_type_class::signed_normalized;
     case data_type::float10_11_11_pack32: return data_type_class::float_;
-    default: assert(false);
+    default: assert(false); return data_type_class::float_; // silence warnings
   }
   // clang-format on
 }
@@ -105,7 +105,7 @@ inline constexpr std::string_view get_data_type_name(data_type ty) noexcept {
     case data_type::unorm2_10_10_10_pack32: return "unorm2_10_10_10_pack32"sv;
     case data_type::snorm2_10_10_10_pack32: return "snorm2_10_10_10_pack32"sv;
     case data_type::float10_11_11_pack32: return "float10_11_11_pack32"sv;
-    default: assert(false);
+    default: assert(false); return ""sv;    // silence warnings
   }
   // clang-format on
 }
@@ -135,7 +135,7 @@ inline constexpr GLenum get_gl_component_type(data_type ty) noexcept {
     case data_type::unorm2_10_10_10_pack32: return GL_UNSIGNED_INT_2_10_10_10_REV;
     case data_type::snorm2_10_10_10_pack32: return GL_INT_2_10_10_10_REV;
     case data_type::float10_11_11_pack32: return GL_UNSIGNED_INT_10F_11F_11F_REV;
-    default: assert(false);
+    default: assert(false); return 0;   // silence warnings
   }
   // clang-format on
 }

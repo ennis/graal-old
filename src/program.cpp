@@ -10,7 +10,7 @@ namespace {
 
 // Tries to link the program. If it fails, deletes the program object and throws
 // a program_link_error exception.
-bool link_program(GLuint prog, std::ostream &link_log) {
+void link_program(GLuint prog, std::ostream &link_log) {
   glLinkProgram(prog);
 
   // retrieve log

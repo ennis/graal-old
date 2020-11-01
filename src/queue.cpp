@@ -13,6 +13,20 @@ namespace graal {
 namespace detail {
 namespace {
 
+bool adjust_allocation_requirements(allocation_requirements &      req_a,
+                                    const allocation_requirements &req_b) {
+  // TODO dedicated allocs?
+  if (req_a.flags != req_b.flags)
+    return false;
+  // don't alias if the memory type bits are not strictly the same
+  if (req_a.memory_type_bits != req_b.memory_type_bits)
+    return false;
+
+  req_a.alignment = std::max(req_a.alignment, req_b.alignment);
+  req_a.size = std::max(req_a.size, req_b.size);
+  return true;
+}
+
 std::string get_task_name(task_index index, const task &task) {
   if (task.name.empty()) {
     return fmt::format("#{}", index);
@@ -87,8 +101,8 @@ private:
 using variable_set = boost::dynamic_bitset<uint64_t>;
 
 void dump_tasks(std::ostream &out, const std::vector<task> &tasks,
-                const std::vector<virtual_resource_ptr> &temporaries,
-                const std::vector<variable_set> &        live_sets) {
+                const std::vector<resource_ptr> &temporaries,
+                const std::vector<variable_set> &live_sets) {
   out << "digraph G {\n";
   out << "node [shape=record fontname=Consolas];\n";
 
@@ -171,10 +185,10 @@ void queue_impl::enqueue_pending_tasks() {
   fmt::print("Temporaries:\n");
   for (auto tmp : temporaries_) {
     if (tmp->name().empty()) {
-      fmt::print(" - temporary <unnamed> (discarded={})\n", tmp->discarded_);
+      fmt::print(" - temporary <unnamed> (discarded={})\n", tmp->discarded);
     } else {
       fmt::print(" - temporary `{}` (discarded={})\n", tmp->name(),
-                 tmp->discarded_);
+                 tmp->discarded);
     }
   }
 
@@ -281,6 +295,10 @@ void queue_impl::enqueue_pending_tasks() {
   // the resource was determined dead
   // kill_task.resize(num_temporaries, 0);
 
+  std::vector<allocation_requirements> allocations;
+  std::vector<size_t>                  alloc_map;
+  alloc_map.resize(num_temporaries, (size_t)-1);
+
   for (size_t i = 0; i < num_tasks; ++i) {
     // determine the resources live before this task
     live.reset();
@@ -339,44 +357,58 @@ void queue_impl::enqueue_pending_tasks() {
         fmt::print("{:02d}: Live({})", i, temporaries_[t0]->name());
 #endif
         auto &tmp0 = temporaries_[t0];
+
+        // skip if it doesn't need allocation
+        if (tmp0->allocated)
+          continue;
+
+        auto alloc_requirements = tmp0->get_allocation_requirements(device_);
         // resource became alive, if possible, alias with a dead temporary,
         // otherwise allocate a new one.
 
-        // whether we managed to find a dead resource to alias with
-        bool aliased = false;
-        for (size_t t1 = 0; t1 < num_temporaries; ++t1) {
-          // filter out live resources
-          if (!dead[t1])
-            continue;
+        if (!(alloc_requirements.flags & allocation_flag::aliasable)) {
+          // resource not aliasable, because it was explicitly requested to be
+          // not aliasable, or because there's still an external handle to it.
+          allocations.push_back(alloc_requirements);
+          alloc_map.push_back(allocations.size() - 1);
+        } else {
 
-            // filter out dead resources still used on parallel branches
-            // auto kt = kill_task[t1];
-            // if (!reachability[i][kt] && !reachability[kt][i])
-            //  continue;
+          // whether we managed to find a dead resource to alias with
+          bool aliased = false;
+          for (size_t t1 = 0; t1 < num_temporaries; ++t1) {
+            // filter out live resources
+            if (!dead[t1])
+              continue;
+
 #ifdef GRAAL_TRACE_BATCH_SUBMIT
-          fmt::print(" | {}", temporaries_[t1]->name());
+            fmt::print(" | {}", temporaries_[t1]->name());
 #endif
+            auto  i_alloc = alloc_map[t1];
+            auto &dead_alloc_requirements = allocations[i_alloc];
 
-          // resource is dead, and not on a parallel branch
-          // now check that it is compatible
-          auto &tmp1 = temporaries_[t1];
-          if (tmp0->is_aliasable_with(*tmp1)) {
-            // the two resources may alias
-            tmp0->alias_with(*tmp1);
-            // not dead anymore
-            dead[t1] = false;
-            aliased = true;
-            break;
+            if (adjust_allocation_requirements(dead_alloc_requirements,
+                                               alloc_requirements)) {
+              // the two resources may alias; the requirements have been
+              // adjusted
+              alloc_map[t0] = i_alloc;
+              // not dead anymore
+              dead[t1] = false;
+              aliased = true;
+              break;
+            }
+
+            // otherwise continue
           }
-          // otherwise continue
-        }
 
 #ifdef GRAAL_TRACE_BATCH_SUBMIT
-        fmt::print("\n");
+          fmt::print("\n");
 #endif
-        if (!aliased) {
-          // we could not find a resource to alias with, allocate a new one
-          tmp0->allocate();
+          // no aliasing opportunities
+          if (!aliased) {
+            // new allocation
+            allocations.push_back(alloc_requirements);
+            alloc_map.push_back(allocations.size() - 1);
+          }
         }
       }
     }
@@ -440,7 +472,7 @@ void queue_impl::enqueue_pending_tasks() {
 
   // reset temporary indices that were assigned during queuing.
   for (auto &&tmp : temporaries_) {
-    tmp->tmp_index_ = invalid_temporary_index;
+    tmp->tmp_index = invalid_temporary_index;
   }
 
   temporaries_.clear();
@@ -448,58 +480,71 @@ void queue_impl::enqueue_pending_tasks() {
   current_batch_++;
 }
 
-temporary_index queue_impl::add_temporary(virtual_resource_ptr resource) {
-  if (resource->tmp_index_ != invalid_temporary_index) {
+temporary_index queue_impl::add_temporary(resource_ptr resource) {
+  if (resource->tmp_index != invalid_temporary_index) {
     // already added
-    return resource->tmp_index_;
+    return resource->tmp_index;
   }
   const auto tmp_index = temporaries_.size();
-  resource->tmp_index_ = tmp_index;
+  resource->tmp_index = tmp_index;
   temporaries_.push_back(resource);
   return tmp_index;
 }
 
 } // namespace detail
 
-void handler::add_resource_access(
-    detail::resource_tracker &tracker, access_mode mode,
-    std::shared_ptr<detail::virtual_resource> virt_res) {
-  if (tracker.batch == batch_index_ &&
-      (mode == access_mode::read_only || mode == access_mode::read_write)) {
-    // if the last write was in a different batch
-    // we know that all commands have been submitted.
+void handler::add_buffer_access(std::shared_ptr<detail::buffer_impl> buffer,
+    access_mode mode, buffer_usage usage) {
+  add_resource_access(buffer, mode);
+  // TODO do something with usage?
+}
 
-    auto &pred_succ = queue_.tasks_[tracker.last_producer].succs;
+void handler::add_image_access(std::shared_ptr<detail::image_impl> image, access_mode mode,
+                               image_usage usage) {
+  add_resource_access(image, mode);
+  // TODO do something with usage? (layout transitions)
+}
+
+void handler::add_resource_access(std::shared_ptr<detail::resource> resource,
+                                  access_mode                       mode) {
+  if (resource->batch == batch_index_ &&
+      (mode == access_mode::read_only || mode == access_mode::read_write)) {
+
+    // if the last write was in a different batch, then we depend on the
+    // previous batch to be finished.
+    // TODO add a dependency to the task that was aleady submitted?
+
+    // we know that the producer is a task in this batch
+    auto &pred_succ = queue_.tasks_[resource->producer].succs;
     if (std::find(pred_succ.begin(), pred_succ.end(), task_index_) ==
         pred_succ.end()) {
       // add current task in the list of successors
       pred_succ.push_back(task_index_);
     }
     // add the producer to the current list of predecessors
-    task_.preds.push_back(tracker.last_producer);
+    task_.preds.push_back(resource->producer);
   }
 
   if (mode == access_mode::read_write || mode == access_mode::write_only) {
-    tracker.batch = batch_index_;
-    tracker.last_producer = task_index_;
+    // we're writing to this resource: set producer to this task and set the
+    // last write batch
+    resource->batch = batch_index_;
+    resource->producer = task_index_;
   }
 
-  // there's an associated virtual resource, track usage
-  if (virt_res) {
-    const auto tmp_index = queue_.add_temporary(virt_res);
+  const auto tmp_index = queue_.add_temporary(resource);
 
-    switch (mode) {
-    case access_mode::read_only:
-      task_.add_read(tmp_index);
-      break;
-    case access_mode::write_only:
-      task_.add_write(tmp_index);
-      break;
-    case access_mode::read_write:
-      task_.add_read(tmp_index);
-      task_.add_write(tmp_index);
-      break;
-    }
+  switch (mode) {
+  case access_mode::read_only:
+    task_.add_read(tmp_index);
+    break;
+  case access_mode::write_only:
+    task_.add_write(tmp_index);
+    break;
+  case access_mode::read_write:
+    task_.add_read(tmp_index);
+    task_.add_write(tmp_index);
+    break;
   }
 }
 

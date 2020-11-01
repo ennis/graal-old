@@ -10,6 +10,6 @@ struct buffer_deleter {
 
 using buffer_handle = detail::gl_handle<buffer_deleter>;
 
-buffer_handle create_buffer(size_t size, const void *data, GLbitfield flags);
+buffer_handle get_unbound_vk_buffer(size_t size, const void *data, GLbitfield flags);
 
 } // namespace graal::gl

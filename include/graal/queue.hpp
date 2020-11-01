@@ -10,13 +10,14 @@
 #include <graal/buffer.hpp>
 #include <graal/detail/image_resource.hpp>
 #include <graal/detail/named_object.hpp>
+#include <graal/detail/resource.hpp>
 #include <graal/detail/task.hpp>
-#include <graal/detail/virtual_resource.hpp>
+#include <graal/device.hpp>
 #include <graal/image.hpp>
 #include <graal/image_format.hpp>
 #include <graal/image_type.hpp>
+#include <graal/image_usage.hpp>
 #include <graal/range.hpp>
-#include <graal/target.hpp>
 
 namespace graal {
 
@@ -27,17 +28,14 @@ class queue_impl;
 /// @brief Command handler.
 class handler {
   friend class detail::queue_impl;
-  template <typename, image_type, target, access_mode, bool>
-  friend class accessor;
+
+  template <image_type, image_usage, access_mode, bool>
+  friend class image_accessor;
+
+  template <typename, buffer_usage, access_mode, bool>
+  friend class buffer_accessor;
 
 public:
-  /// @brief Adds a virtual resource access
-  /// @param virt_res (optional)
-  /// @param mode
-  void add_resource_access(
-      detail::resource_tracker &tracker, access_mode mode,
-      std::shared_ptr<detail::virtual_resource> virt_res = nullptr);
-
   /// @brief Adds a callback function that is executed during submission.
   template <typename F> void add_command(F &&command_callback) {
     static_assert(std::is_invocable_v<F>,
@@ -45,11 +43,39 @@ public:
     task_.callbacks.push_back(std::move(command_callback));
   }
 
+
+  // Called by buffer accessors to register an use of a buffer in a task
+  template<typename T, bool HostVisible>
+  void add_buffer_access(buffer<T, HostVisible>& buffer,
+      access_mode mode, buffer_usage usage) 
+  {
+      add_buffer_access(buffer.impl_, mode, usage);
+  }
+
+  // Called by image accessors to register an use of an image in a task
+  template<image_type Type, bool HostVisible>
+  void add_image_access(image<Type, HostVisible> image,
+      access_mode mode, image_usage usage) 
+  {
+      add_image_access(image.impl_, mode, usage);
+  }
+
 private:
   handler(detail::queue_impl &queue, detail::task &t,
           detail::task_index task_index, detail::batch_index batch_index)
       : queue_{queue}, task_{t}, task_index_{task_index}, batch_index_{
                                                               batch_index} {}
+
+  // Called by buffer accessors to register an use of a buffer in a task
+  void add_buffer_access(std::shared_ptr<detail::buffer_impl> buffer,
+                         access_mode mode, buffer_usage usage);
+
+  // Called by image accessors to register an use of an image in a task
+  void add_image_access(std::shared_ptr<detail::image_impl> image,
+                        access_mode mode, image_usage usage);
+
+  void add_resource_access(std::shared_ptr<detail::resource> resource,
+                           access_mode                       mode);
 
   detail::queue_impl &queue_;
   detail::task &      task_;
@@ -63,6 +89,8 @@ class queue_impl {
   friend class ::graal::handler;
 
 public:
+  queue_impl(device_impl_ptr device) : device_{std::move(device)} {}
+
   template <typename F> void schedule(std::string name, F f) {
     // create task
     task t;
@@ -76,43 +104,11 @@ public:
   void enqueue_pending_tasks();
 
 private:
-  // when is it safe to remove the entry?
-  // - when it is not in use anymore
-  // when does it become unused?
-  // - when the resource is marked as discarded, and
-  // - when the last task that "uses" this resource has finished
-  // what does it mean for a "task" to use a resource?
-  // - a use is just referencing the resource within the task
-  // how do we know the task has finished?
-  // - each task is put in a "batch" before execution
-  // - the batch is guarded by a fence; when this fence is signalled, the
-  // virtual resource is not in use anymore
-  //
-  // What about the concrete resource?
-  // - it depends on which queue the concrete resource is going to be used
-  // - in OpenGL, there's only one queue, so it's OK to re-use the concrete
-  // resource
-  //		if there are no uses in unsubmitted tasks
-
-  // temporary_index add_temporary(image);
-  temporary_index add_temporary(virtual_resource_ptr resource);
+  temporary_index add_temporary(resource_ptr resource);
 
   // set of all resources used in the batch (virtual or not)
-  std::vector<virtual_resource_ptr> temporaries_;
-
-  // resource
-  // - virtual discard() (all resources discardable -> resource renaming)
-  // - batch_resource_index
-  //
-  // virtual_resource : public resource
-  // virtual_buffer_resource : public virtual_resource
-  // virtual_image_resource: public virtual_resource
-  // image_resource : public resource
-  // image_base_impl<type> : public image_resource
-  // buffer_base_impl : public resource
-  //
-  //
-
+  device_impl_ptr           device_;
+  std::vector<resource_ptr> temporaries_;
   // pending tasks, a.k.a "batch"
   std::vector<task> tasks_;
   batch_index       current_batch_ = 0;
@@ -123,7 +119,8 @@ private:
 /// @brief
 class queue {
 public:
-  queue() : impl_{std::make_shared<detail::queue_impl>()} {}
+  queue(device &device)
+      : impl_{std::make_shared<detail::queue_impl>(device.impl_)} {}
 
   /// @brief
   /// @tparam F
