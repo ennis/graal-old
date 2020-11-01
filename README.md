@@ -19,6 +19,9 @@ TODO
 ### What it means
 Graphics Resource Aliasing Abstraction Layer, but don't look too much into it.
 
+### Dependencies
+See CMakeLists.txt. Preferably install dependencies using vcpkg.
+
 ### Credits
 - This software uses a modified version of https://github.com/grisumbras/enum-flags. See ext/flags/LICENSE.
 
