@@ -1,6 +1,6 @@
 # GRAAL 
 
-This repository contains the source code of graal, a modern C++17 wrapper over OpenGL that makes it easy to optimize resource allocation in complex rendering pipelines.
+This repository contains the source code of graal, a modern C++17 wrapper over ~~OpenGL~~ Vulkan that makes it easy to optimize resource allocation in complex rendering pipelines.
 
 ### Disclaimer
 This is a work in progress.
