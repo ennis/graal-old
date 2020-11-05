@@ -12,6 +12,7 @@
 #include <graal/ext/vertex_traits.hpp>
 #include <vulkan/vulkan.hpp>
 
+#define IMGUI_IMPLEMENTATION
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
@@ -35,10 +36,15 @@ using namespace graal;
   image NAME{virtual_image, image_format::r16g16_sfloat, range{1280, 720}};    \
   NAME.set_name(#NAME);
 
-#define READ(img) h.add_image_access(img, access_mode::read_only, image_usage::sampled_image);
-#define DRAW(img)  h.add_image_access(img, access_mode::read_write, image_usage::color_attachment);
-#define WRITE(img) h.add_image_access(img, access_mode::write_only, image_usage::storage_image);
+#define READ(img)                                                              \
+  h.add_image_access(img, access_mode::read_only, image_usage::sampled_image);
+#define DRAW(img)                                                              \
+  h.add_image_access(img, access_mode::read_write,                             \
+                     image_usage::color_attachment);
+#define WRITE(img)                                                             \
+  h.add_image_access(img, access_mode::write_only, image_usage::storage_image);
 
+void test_shader(device& device);
 void test_case_1(graal::queue &q);
 void test_case_2(graal::queue &q);
 
@@ -83,10 +89,10 @@ public:
     auto vertex_src = read_text_file("data/shaders/background.vert");
     auto fragment_src = read_text_file("data/shaders/background.frag");
 
-    try {
-      auto vertex_shader = compile_shader(shader_stage::vertex, vertex_src);
+    /*try {
+      auto vertex_shader = compile_shader(shader_stage::vertex, vertex_src, std::cerr);
       auto fragment_shader =
-          compile_shader(shader_stage::fragment, fragment_src);
+          compile_shader(shader_stage::fragment, fragment_src, std::cerr);
       bg_program = program_handle{};
       bg_program = create_program(vertex_shader.get(), fragment_shader.get(), 0,
                                   0, 0, std::cerr);
@@ -94,7 +100,7 @@ public:
       fmt::print(stderr, "could not compile shader:\n {}\n", err.log());
     } catch (const program_link_error &err) {
       fmt::print(stderr, "could not link program:\n {}\n", err.log());
-    }
+    }*/
   }
 
   void setup() {
@@ -142,16 +148,6 @@ private:
   program_handle      bg_program;
 };
 
-
-
-// Creating a resource with vulkan:
-// 1. query memory requirements
-// 2. allocate a device memory block
-// 3. bind memory
-
-// For virtual resources:
-// 1. if aliasing
-
 int main() {
 
   //=======================================================
@@ -189,10 +185,13 @@ int main() {
   const char **glfwExtensions;
   glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
 
-  device dev{ std::span{glfwExtensions, (size_t)glfwExtensionCount} };
+  device dev{std::span{glfwExtensions, (size_t)glfwExtensionCount}};
 
   //=======================================================
-  queue q{ dev };
+  queue q{dev};
+
+  test_shader(dev);
+  test_case_1(q);
 
   // ---- Main loop ----
   bool  reload_shaders = true;
@@ -239,6 +238,36 @@ int main() {
 }
 
 //=============================================================================
+void test_shader(device & device) {
+  constexpr std::string_view source = R"(
+#version 450
+#extension GL_ARB_separate_shader_objects : enable
+#pragma graal_shader_interface
+
+layout(set=0,binding=0) uniform UniformBufferObject {
+    mat4 model;
+    mat4 view;
+    mat4 proj;
+} ubo;
+
+void main() {}
+
+/*layout(location=0) in vec2 inPosition;
+layout(location=1) in vec3 inColor;
+
+layout(location=0) out vec3 fragColor;
+
+void main() {
+    gl_Position = vec4(inPosition, 0.0, 1.0);
+    fragColor = inColor;
+}*/
+
+)";
+
+  auto shader_module = compile_shader(device, shader_stage::vertex, source, std::cerr);
+}
+
+//=============================================================================
 
 void draw_frame(graal::queue &q) {}
 
@@ -260,7 +289,10 @@ void test_case_1(graal::queue &q) {
 
   // q.schedule("INIT", [&](scheduler &sched) { WRITE(A) WRITE(B) WRITE(C) });
 
-  q.schedule("T0", [&](handler &h) { DRAW(A) });
+  q.schedule("T0", [&](handler &h) {
+    // image_accessor color{A, color_attachment, };
+    DRAW(A)
+  });
   q.schedule("T1", [&](handler &h) { DRAW(B) });
   q.schedule("T2", [&](handler &h) { DRAW(C) });
 
@@ -308,12 +340,12 @@ void test_case_1(graal::queue &q) {
   q.enqueue_pending_tasks();
 
   q.schedule("T10", [&](handler &h) {
-      //color_attachment_accessor write_K{K, discard, h};
-      //sampled_image_accessor sample_I{ I, h };
+    // color_attachment_accessor write_K{K, discard, h};
+    // sampled_image_accessor sample_I{ I, h };
 
     auto f = [=] {
       // do something with tex
-      //auto tex = write_K.get_gl_object();
+      // auto tex = write_K.get_gl_object();
     };
   });
   q.enqueue_pending_tasks();

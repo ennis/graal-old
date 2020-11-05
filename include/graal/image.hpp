@@ -99,15 +99,15 @@ inline constexpr vk::SampleCountFlagBits get_vk_sample_count(unsigned samples) {
 
 class image_impl : public resource {
 public:
-  image_impl(image_type type, allocation_flags flags) {}
+  image_impl(image_type type, allocation_flags flags) : type_{type} {}
   image_impl(image_type type, image_format format, allocation_flags flags)
-      : format_{format} {}
+      : type_{type}, format_{format} {}
   image_impl(image_type type, range<3> size, allocation_flags flags)
-      : size_{size} {}
+      : type_{type}, size_{size} {}
 
   image_impl(image_type type, image_format format, range<3> size,
              allocation_flags flags)
-      : format_{format}, size_{size} {}
+      : type_{type}, format_{format}, size_{size} {}
 
   //-------------------------------------------------------
   void set_size(const range<3> &s) {

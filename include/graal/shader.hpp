@@ -1,31 +1,25 @@
 #pragma once
+#include <graal/device.hpp>
+
 #include <exception>
-#include <graal/detail/gl_handle.hpp>
-#include <graal/glad.h>
 #include <ostream>
 #include <string_view>
+#include <vulkan/vulkan.hpp>
 
 namespace graal {
-struct shader_deleter {
-  void operator()(GLuint shader_obj) const noexcept {
-    glDeleteShader(shader_obj);
-  }
-};
-
-using shader_handle = detail::gl_handle<shader_deleter>;
 
 /// @brief
-enum class shader_stage : GLenum {
-  vertex = GL_VERTEX_SHADER,
-  fragment = GL_FRAGMENT_SHADER,
-  tess_control = GL_TESS_CONTROL_SHADER,
-  tess_evaluation = GL_TESS_EVALUATION_SHADER,
-  geometry = GL_GEOMETRY_SHADER,
-  compute = GL_COMPUTE_SHADER
+enum class shader_stage {
+  vertex = VK_SHADER_STAGE_VERTEX_BIT,
+  fragment = VK_SHADER_STAGE_FRAGMENT_BIT,
+  tess_control = VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT,
+  tess_evaluation = VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT,
+  geometry = VK_SHADER_STAGE_GEOMETRY_BIT,
+  compute = VK_SHADER_STAGE_COMPUTE_BIT
 };
 
-inline constexpr GLenum shader_stage_to_glenum(shader_stage stage) noexcept {
-  return static_cast<GLenum>(stage);
+inline constexpr vk::ShaderStageFlagBits shader_stage_to_vk_shader_stage_flag_bits(shader_stage stage) noexcept {
+  return static_cast<vk::ShaderStageFlagBits>(stage);
 }
 
 /// @brief Thrown when a shader fails to compile.
@@ -45,19 +39,12 @@ private:
   std::string  log_;
 };
 
-/// @brief
-/// @param stage
-/// @param source
-/// @return
-[[nodiscard]] shader_handle compile_shader(shader_stage     stage,
-                                           std::string_view source);
-
-/// @brief
+/// @brief Compiles GLSL source code into a VkShaderModule
 /// @param stage
 /// @param source
 /// @param out_log
 /// @return
-[[nodiscard]] shader_handle compile_shader(shader_stage     stage,
+[[nodiscard]] vk::ShaderModule compile_shader(device& device, shader_stage     stage,
                                            std::string_view source,
                                            std::ostream &   out_log);
 
