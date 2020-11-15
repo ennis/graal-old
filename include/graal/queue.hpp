@@ -18,129 +18,114 @@
 #include <graal/image_type.hpp>
 #include <graal/image_usage.hpp>
 #include <graal/range.hpp>
+#include <graal/swapchain.hpp>
 
 namespace graal {
 
 namespace detail {
 class queue_impl;
-} // namespace detail
+}  // namespace detail
 
+//-----------------------------------------------------------------------------
 /// @brief Command handler.
 class handler {
-  friend class detail::queue_impl;
+    friend class queue;
+    friend class detail::queue_impl;
 
-  template <image_type, image_usage, access_mode, bool>
-  friend class image_accessor;
+    template<image_type, image_usage, access_mode, bool>
+    friend class image_accessor;
 
-  template <typename, buffer_usage, access_mode, bool>
-  friend class buffer_accessor;
-
-public:
-  /// @brief Adds a callback function that is executed during submission.
-  template <typename F> void add_command(F &&command_callback) {
-    static_assert(std::is_invocable_v<F>,
-                  "command callback has an invalid signature");
-    task_.callbacks.push_back(std::move(command_callback));
-  }
-
-
-  // Called by buffer accessors to register an use of a buffer in a task
-  template<typename T, bool HostVisible>
-  void add_buffer_access(buffer<T, HostVisible>& buffer,
-      access_mode mode, buffer_usage usage) 
-  {
-      add_buffer_access(buffer.impl_, mode, usage);
-  }
-
-  // Called by image accessors to register an use of an image in a task
-  template<image_type Type, bool HostVisible>
-  void add_image_access(image<Type, HostVisible> image,
-      access_mode mode, image_usage usage) 
-  {
-      add_image_access(image.impl_, mode, usage);
-  }
-
-private:
-  handler(detail::queue_impl &queue, detail::task &t,
-          detail::task_index task_index, detail::batch_index batch_index)
-      : queue_{queue}, task_{t}, task_index_{task_index}, batch_index_{
-                                                              batch_index} {}
-
-  // Called by buffer accessors to register an use of a buffer in a task
-  void add_buffer_access(std::shared_ptr<detail::buffer_impl> buffer,
-                         access_mode mode, buffer_usage usage);
-
-  // Called by image accessors to register an use of an image in a task
-  void add_image_access(std::shared_ptr<detail::image_impl> image,
-                        access_mode mode, image_usage usage);
-
-  void add_resource_access(std::shared_ptr<detail::resource> resource,
-                           access_mode                       mode);
-
-  detail::queue_impl &queue_;
-  detail::task &      task_;
-  detail::task_index  task_index_;
-  detail::batch_index batch_index_;
-};
-
-namespace detail {
-
-class queue_impl {
-  friend class ::graal::handler;
+    template<typename, buffer_usage, access_mode, bool>
+    friend class buffer_accessor;
 
 public:
-  queue_impl(device_impl_ptr device) : device_{std::move(device)} {}
+    /// @brief Adds a callback function that is executed during submission.
+    template<typename F>
+    void add_command(F&& command_callback) {
+        static_assert(std::is_invocable_v<F, vk::CommandBuffer>,
+                "command callback has an invalid signature");
+        task_->callbacks.push_back(std::move(command_callback));
+    }
 
-  template <typename F> void schedule(std::string name, F f) {
-    // create task
-    task t;
-    t.name = std::move(name);
-    task_index ti = tasks_.size();
-    handler    sched{*this, t, ti, current_batch_};
-    f(sched);
-    tasks_.push_back(std::move(t));
-  }
+    // Called by buffer accessors to register an use of a buffer in a task
+    template<typename T, bool HostVisible>
+    void add_buffer_access(buffer<T, HostVisible>& buffer, access_mode mode, buffer_usage usage) {
+        add_buffer_access(buffer.impl_, mode, usage);
+    }
 
-  void enqueue_pending_tasks();
+    // Called by image accessors to register an use of an image in a task
+    template<image_type Type, bool HostVisible>
+    void add_image_access(image<Type, HostVisible> image, access_mode mode, image_usage usage) {
+        add_image_access(image.impl_, mode, usage);
+    }
 
 private:
-  temporary_index add_temporary(resource_ptr resource);
+    handler(std::unique_ptr<detail::submit_task> task) : task_{std::move(task)} {
+    }
 
-  // set of all resources used in the batch (virtual or not)
-  device_impl_ptr           device_;
-  std::vector<resource_ptr> temporaries_;
-  // pending tasks, a.k.a "batch"
-  std::vector<task> tasks_;
-  batch_index       current_batch_ = 0;
+    // Called by buffer accessors to register an use of a buffer in a task
+    void add_buffer_access(
+            std::shared_ptr<detail::buffer_impl> buffer, access_mode mode, buffer_usage usage);
+
+    // Called by image accessors to register an use of an image in a task
+    void add_image_access(
+            std::shared_ptr<detail::image_impl> image, access_mode mode, image_usage usage);
+
+    // TODO add_direct_image_access for raw VkImages
+    // TODO add_direct_buffer_access for raw VkBuffer
+    void add_resource_access(std::shared_ptr<detail::virtual_resource> resource, access_mode mode);
+
+    std::unique_ptr<detail::submit_task> task_;
+    struct resource_access {
+        detail::resource_ptr resource;
+        access_mode mode;
+        union {
+            buffer_usage buffer;
+            image_usage image;
+        } usage_flags;
+    };
+    std::vector<resource_access> accesses_;
 };
 
-} // namespace detail
+//-----------------------------------------------------------------------------
+
+struct queue_properties {
+    int max_batches_in_flight = 1;
+};
 
 /// @brief
 class queue {
 public:
-  queue(device &device)
-      : impl_{std::make_shared<detail::queue_impl>(device.impl_)} {}
+    queue(device& device, const queue_properties& props = {});
 
-  /// @brief
-  /// @tparam F
-  /// @param f
-  template <typename F> void schedule(F f) {
-    impl_->schedule("", std::forward<F>(f));
-  }
+    template<typename F>
+    void schedule(F f) {
+        schedule(typeid(f).name(), f);
+    }
 
-  /// @brief
-  /// @tparam F
-  /// @param name
-  /// @param f
-  template <typename F> void schedule(std::string name, F f) {
-    impl_->schedule(std::move(name), std::forward<F>(f));
-  }
+    /// @brief
+    /// @tparam F
+    /// @param f
+    template<typename F>
+    void schedule(std::string_view name, F f) {
+        // create task
+        auto h = begin_build_task(name);
+        f(h);
+        end_build_task(std::move(h));
+    }
 
-  void enqueue_pending_tasks() { impl_->enqueue_pending_tasks(); }
+    void enqueue_pending_tasks();
+
+    void present(swapchain_image&& image);
 
 private:
-  std::shared_ptr<detail::queue_impl> impl_;
+    /// @brief Called to start building a task. Returns the task sequence number.
+    [[nodiscard]] handler begin_build_task(std::string_view name) const noexcept;
+
+    /// @brief Called to finish building a task. Adds the task to the current batch.
+    void end_build_task(handler&& handler);
+
+    std::shared_ptr<detail::queue_impl> impl_;
 };
 
-} // namespace graal
+}  // namespace graal

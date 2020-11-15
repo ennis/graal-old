@@ -36,7 +36,7 @@ image_impl::get_allocation_requirements(device_impl_ptr dev) {
   auto image = get_unbound_vk_image(dev);
 
   return allocation_requirements{
-      // T
+      // TODO
   };
 }
 

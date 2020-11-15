@@ -11,6 +11,7 @@ enum class image_usage {
   depth_stencil_attachment,
   pixel_transfer_source,      // == GPU image readback
   pixel_transfer_destination, // == GPU image upload
+  presentation,		// vkQueuePresent
 };
 
 } // namespace graal

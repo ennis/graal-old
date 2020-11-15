@@ -22,7 +22,8 @@ find_package(OpenImageIO REQUIRED)
 target_compile_definitions(OpenImageIO::OpenImageIO INTERFACE -DOIIO_USE_FMT=0)
 
 # --- Boost ------------------------------------
-find_package(Boost REQUIRED)
+find_package(Boost REQUIRED COMPONENTS program_options)
+
 
 
 #==============================================================================
@@ -56,15 +57,18 @@ set_target_properties(SPIRV PROPERTIES FOLDER External/glslang)
 
 # --- VMA ------------------------------------
 FetchContent_Declare(
-  VulkanMemoryAllocator
+  # the name should preferably be lowercase because FetchContent_Populate() hilariously converts it to lowercase 
+  # for the _SOURCE_DIR and _BINARY_DIR variables.
+  # See http://cmake.3232098.n2.nabble.com/How-to-link-against-projects-added-through-FetchContent-tp7597224p7597227.html
+  vulkan_memory_allocator  
   GIT_REPOSITORY https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
   GIT_TAG 8cd86b6dd47220f481cd81dbfc79e0aaffac899f
 )
-FetchContent_GetProperties(VulkanMemoryAllocator)
-if(NOT VulkanMemoryAllocator_POPULATED)
-  FetchContent_Populate(VulkanMemoryAllocator)
-  add_library(VulkanMemoryAllocator INTERFACE IMPORTED)
-  target_include_directories(VulkanMemoryAllocator INTERFACE "${VulkanMemoryAllocator_SOURCE_DIR}")
+FetchContent_GetProperties(vulkan_memory_allocator)
+if(NOT vulkan_memory_allocator)
+  FetchContent_Populate(vulkan_memory_allocator)
+  add_library(vulkan_memory_allocator INTERFACE IMPORTED)
+  target_include_directories(vulkan_memory_allocator INTERFACE "${vulkan_memory_allocator_SOURCE_DIR}/src")
 endif()
 
 
@@ -78,10 +82,10 @@ FetchContent_Declare(
 FetchContent_GetProperties(imgui)
 if(NOT imgui_POPULATED)
   FetchContent_Populate(imgui)
-  add_library(imgui STATIC ${imgui_SOURCE_DIR}/imgui.cpp 
-                           ${imgui_SOURCE_DIR}/imgui_draw.cpp 
-                           ${imgui_SOURCE_DIR}/imgui_widgets.cpp 
-                           ${imgui_SOURCE_DIR}/imgui_demo.cpp)
+  add_library(imgui STATIC "${imgui_SOURCE_DIR}/imgui.cpp"
+                           "${imgui_SOURCE_DIR}/imgui_draw.cpp"
+                           "${imgui_SOURCE_DIR}/imgui_widgets.cpp"
+                           "${imgui_SOURCE_DIR}/imgui_demo.cpp")
   target_include_directories(imgui PUBLIC "${imgui_SOURCE_DIR}")
 endif()
 set_target_properties(imgui PROPERTIES FOLDER External)
@@ -116,6 +120,10 @@ FetchContent_GetProperties(boost_json)
 if(NOT boost_json_POPULATED)
   FetchContent_Populate(boost_json)
   set(BOOST_JSON_STANDALONE ON CACHE INTERNAL "")
+  set(BOOST_JSON_BUILD_TESTS OFF CACHE INTERNAL "")
+  set(BOOST_JSON_BUILD_FUZZERS OFF CACHE INTERNAL "")
+  set(BOOST_JSON_BUILD_EXAMPLES OFF CACHE INTERNAL "")
+  set(BOOST_JSON_BUILD_BENCHMARKS OFF CACHE INTERNAL "")
   add_subdirectory(${boost_json_SOURCE_DIR} ${boost_json_BINARY_DIR})
 endif()
 set_target_properties(boost_json PROPERTIES FOLDER External)
@@ -150,7 +158,16 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/glfw/glfw.git
   GIT_TAG        3.3.2
 )
-FetchContent_MakeAvailable(glfw)
+FetchContent_GetProperties(glfw)
+if(NOT glfw_POPULATED)
+  FetchContent_Populate(glfw)
+  set(GLFW_BUILD_EXAMPLES OFF CACHE INTERNAL "")
+  set(GLFW_BUILD_TESTS OFF CACHE INTERNAL "")
+  set(GLFW_BUILD_DOCS OFF CACHE INTERNAL "")
+  set(GLFW_INSTALL OFF CACHE INTERNAL "")
+  set(GLFW_VULKAN_STATIC OFF CACHE INTERNAL "")
+  add_subdirectory(${glfw_SOURCE_DIR} ${glfw_BINARY_DIR})
+endif()
 set_target_properties(glfw PROPERTIES FOLDER External)
 
 

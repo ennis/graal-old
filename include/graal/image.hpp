@@ -37,7 +37,7 @@ namespace detail {
 inline constexpr allocation_flags
 get_allocation_flags(bool                    host_visible,
                      const image_properties &props) noexcept {
-  allocation_flags f;
+    allocation_flags f{};
   if (props.aliasable) {
     f |= allocation_flag::aliasable;
   }
@@ -97,7 +97,7 @@ inline constexpr vk::SampleCountFlagBits get_vk_sample_count(unsigned samples) {
 // TODO: should we pass the device to the constructor, or only when first using
 // the object?
 
-class image_impl : public resource {
+class image_impl : public virtual_resource {
 public:
   image_impl(image_type type, allocation_flags flags) : type_{type} {}
   image_impl(image_type type, image_format format, allocation_flags flags)
@@ -187,7 +187,7 @@ public:
     return has_size() && has_format();
   }
 
-  void add_usage(vk::ImageUsageFlags flags) {
+  void add_usage_flags(vk::ImageUsageFlags flags) {
     if (image_) {
       // can't set usage once the resource is created
       throw std::logic_error{"image already created"};
@@ -312,16 +312,24 @@ public:
   /// @param format
   void set_format(image_format format) { impl_->set_format(format); }
 
-  [[nodiscard]] void set_mipmaps(unsigned num_mipmaps) {
+  void set_mipmaps(unsigned num_mipmaps) {
     impl_->set_mipmaps(num_mipmaps);
   }
 
-  [[nodiscard]] void set_samples(unsigned num_samples) {
+  void set_samples(unsigned num_samples) {
     impl_->set_samples(num_samples);
   }
 
-  [[nodiscard]] void set_array_layers(unsigned array_layers) {
+  void set_array_layers(unsigned array_layers) {
     impl_->set_array_layers(array_layers);
+  }
+
+  /// @brief Combines the specified usage with the current image usage flags.
+  /// @param usage 
+  /// You don't need to call this function when using images with accessors,
+  /// as the accessors will set automatically set proper image flags.
+  void add_usage_flags(vk::ImageUsageFlags usage) {
+      impl_->add_usage_flags(usage);
   }
 
   /// @brief

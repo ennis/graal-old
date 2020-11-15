@@ -52,7 +52,8 @@ set(HEADERS
     "include/graal/ext/vertex_traits.hpp"
     "include/graal/ext/geometry.hpp"
     "include/graal/device.hpp"
-    "include/graal/detail/vk_image.hpp")
+    "include/graal/detail/vk_image.hpp" 
+    "include/graal/graphics_pipeline.hpp" "include/graal/instance.hpp" "include/graal/swapchain.hpp" "include/graal/detail/batch.hpp" "include/graal/detail/recycler.hpp"  "include/graal/detail/swapchain_impl.hpp" )
 
 set(SOURCES
     "src/queue.cpp"
@@ -65,14 +66,19 @@ set(SOURCES
     "src/image_format.cpp"
     "src/errors.cpp"
     "src/debug_output.cpp"
+    "src/instance.cpp"
     "src/shader.cpp"
     "src/detail/image_resource.cpp"
     "src/detail/resource.cpp"
+    "src/detail/batch.cpp"
+    "src/detail/task.cpp"
     "src/raw_buffer.cpp"
     "src/program.cpp"
     "src/vertex_array.cpp"
     "src/ext/scene.cpp"
-    "src/device.cpp")
+    "src/device.cpp" 
+    "src/swapchain.cpp" 
+    "src/detail/swapchain_impl.cpp")
 
 # Add source to this project's executable.
 add_library(graal STATIC ${SOURCES} ${HEADERS})
@@ -83,21 +89,55 @@ target_compile_features(graal PUBLIC cxx_std_20)
 target_compile_definitions(
   graal
   PRIVATE GRAAL_TRACE_RESOURCES GRAAL_TRACE_BATCH_SUBMIT
-  PUBLIC VULKAN_HPP_NO_STRUCT_CONSTRUCTORS)
+  PUBLIC VULKAN_HPP_NO_STRUCT_CONSTRUCTORS NOMINMAX)
+
+if(WIN32)
+    target_compile_definitions(graal PUBLIC VK_USE_PLATFORM_WIN32_KHR)
+else()
+    # TODO
+endif()
 
 target_compile_options(graal PUBLIC /permissive- /std:c++latest)
 target_link_libraries(
   graal
-  PUBLIC Vulkan::Vulkan fmt OpenGL::GL
-         Boost::headers 
+  PUBLIC Vulkan::Vulkan
+         fmt
+         OpenGL::GL
+         Boost::headers
          # Extension-only
-         glm tinyobjloader
-         VulkanMemoryAllocator
-  PRIVATE glslang SPIRV )
+         glm
+         tinyobjloader
+         vulkan_memory_allocator
+  PRIVATE glslang SPIRV)
 
-add_executable(graal-test "tests/imgui_impl_opengl3.cpp"
-                          "tests/imgui_impl_glfw.cpp" "tests/main.cpp")
+function(compile_shaders OUTPUT_SPV)
+  foreach(SHADER ${ARGN})
+    set(SHADER_OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${SHADER})
+    add_custom_command(
+      OUTPUT ${SHADER}.spv
+      COMMAND glslc ${SHADER} -g -o ${SHADER_OUTPUT}.spv
+      DEPENDS ${SHADER}
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+      COMMENT "Compiling shader ${SHADER_OUTPUT}.spv")
+    list(APPEND ${OUTPUT_SPV} ${SHADER}.spv)
+  endforeach()
+  set(${OUTPUT_SPV}
+      ${${OUTPUT_SPV}}
+      PARENT_SCOPE)
+endfunction()
+
+set(SHADERS data/shaders/background.vert data/shaders/background.frag)
+
+compile_shaders(COMPILED_SHADERS ${SHADERS})
+message(STATUS "Compiled shaders: ${COMPILED_SHADERS}")
+
+add_executable(
+  graal-test  "tests/imgui_impl_glfw.cpp" "tests/imgui_impl_vulkan.cpp"
+             "tests/main.cpp" ${COMPILED_SHADERS})
 
 target_link_libraries(graal-test PRIVATE graal Vulkan::Vulkan imgui glfw)
+set_target_properties(
+    graal-test PROPERTIES
+    VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 
 add_subdirectory(tools/shadergen)

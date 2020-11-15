@@ -11,7 +11,7 @@ namespace detail {
 
 class device_impl {
 public:
-  device_impl(std::span<const char *const> required_instance_extensions);
+  device_impl(vk::SurfaceKHR present_surface);
   ~device_impl();
 
   [[nodiscard]] vk::Instance get_vk_instance() const noexcept {
@@ -26,18 +26,27 @@ public:
     return allocator_;
   }
 
+  [[nodiscard]] uint32_t get_graphics_queue_family() const noexcept {
+    return graphics_queue_family_;
+  }
+
+  [[nodiscard]] vk::Queue get_graphics_queue() const noexcept {
+    return graphics_queue_;
+  }
+
 private:
   vk::Instance                 instance_;
   vk::PhysicalDevice           physical_device_;
   vk::PhysicalDeviceProperties physical_device_properties_;
   vk::PhysicalDeviceFeatures   physical_device_features_;
   vk::Device                   device_;
-  size_t                       graphics_queue_family_;
-  size_t                       compute_queue_family_;
-  size_t                       transfer_queue_family_;
+  uint32_t                     graphics_queue_family_;
+  uint32_t                     compute_queue_family_;
+  uint32_t                     transfer_queue_family_;
   vk::Queue                    graphics_queue_;
   vk::Queue                    compute_queue_;
   vk::Queue                    transfer_queue_;
+  vk::Queue                    present_queue_;
   VmaAllocator                 allocator_;
 };
 
@@ -47,13 +56,13 @@ using device_impl_ptr = std::shared_ptr<device_impl>;
 
 /// @brief Vulkan instance and device
 class device {
-    friend class queue;
+  friend class queue;
+
 public:
   using impl_t = std::shared_ptr<detail::device_impl>;
 
-  device(std::span<const char *const> required_instance_extensions)
-      : impl_{std::make_shared<detail::device_impl>(
-            required_instance_extensions)} {}
+  device(vk::SurfaceKHR present_surface)
+      : impl_{std::make_shared<detail::device_impl>(present_surface)} {}
 
   [[nodiscard]] vk::Instance get_vk_instance() const noexcept {
     return impl_->get_vk_instance();
@@ -66,6 +75,14 @@ public:
   }
   [[nodiscard]] VmaAllocator get_allocator() const noexcept {
     return impl_->get_allocator();
+  }
+
+  [[nodiscard]] uint32_t get_graphics_queue_family() const noexcept {
+    return impl_->get_graphics_queue_family();
+  }
+
+  [[nodiscard]] vk::Queue get_graphics_queue() const noexcept {
+    return impl_->get_graphics_queue();
   }
 
 private:

@@ -20,7 +20,7 @@ namespace detail {
 inline constexpr allocation_flags
 get_buffer_allocation_flags(bool                     host_visible,
                             const buffer_properties &props) noexcept {
-  allocation_flags f;
+    allocation_flags f = {};
   if (props.aliasable) {
     f |= allocation_flag::aliasable;
   }
@@ -30,14 +30,14 @@ get_buffer_allocation_flags(bool                     host_visible,
   return f;
 }
 
-class buffer_impl : public resource {
+class buffer_impl : public virtual_resource {
 public:
   // construct with unspecified size
-  buffer_impl(allocation_flags flags) : allocation_flags_{flags} {}
+    buffer_impl(allocation_flags flags) : virtual_resource{resource_type::buffer}, allocation_flags_ { flags } {}
 
   // construct uninitialized from size
   buffer_impl(std::size_t byte_size, allocation_flags flags)
-      : allocation_flags_{flags}, byte_size_{byte_size} {}
+      : virtual_resource{ resource_type::buffer }, allocation_flags_{flags}, byte_size_{byte_size} {}
 
   void set_byte_size(std::size_t size) {
     if (has_byte_size() && byte_size_ != size) {
