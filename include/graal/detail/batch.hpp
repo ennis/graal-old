@@ -1,7 +1,11 @@
 #pragma once
 #include <graal/detail/recycler.hpp>
 #include <graal/detail/resource.hpp>
+#include <graal/access_mode.hpp>
+#include <graal/buffer_usage.hpp>
+#include <graal/image_usage.hpp>
 #include <graal/detail/task.hpp>
+#include <graal/detail/swapchain_impl.hpp>
 
 #include <vector>
 #include <vulkan/vulkan.hpp>
@@ -9,46 +13,18 @@
 namespace graal::detail {
 
 
-struct command_buffer_pool {
-    vk::CommandPool command_pool;
-    recycler<vk::CommandBuffer> free_cbs;
-    std::vector<vk::CommandBuffer> used_cbs;
-
-    void reset(vk::Device vk_device) {
-        vk_device.resetCommandPool(command_pool, {});
-        free_cbs.recycle_vector(std::move(used_cbs));
-    }
-
-    vk::CommandBuffer fetch_command_buffer(vk::Device vk_device) {
-        vk::CommandBuffer cb;
-
-        if (!free_cbs.fetch(cb)) {
-            vk::CommandBufferAllocateInfo alloc_info{.commandPool = command_pool,
-                    .level = vk::CommandBufferLevel::ePrimary,
-                    .commandBufferCount = 1};
-            auto cmdbufs = vk_device.allocateCommandBuffers(alloc_info);
-            cb = cmdbufs[0];
-        }
-
-        used_cbs.push_back(cb);
-        return cb;
-    }
-
-    void destroy(vk::Device vk_device) {
-        const auto list = free_cbs.free_list();
-        vk_device.freeCommandBuffers(command_pool, static_cast<uint32_t>(list.size()), list.data());
-        free_cbs.clear();
-    }
-};
-
-/// @brief Per-batch+thread resources
-struct batch_thread_resources {
-    command_buffer_pool cb_pool;
-};
 
 struct recycled_batch_resources {
-    recycler<command_buffer_pool> cb_pools;
     recycler<vk::Semaphore> semaphores;
+};
+
+struct batch_resource_access {
+    detail::resource_ptr resource;
+    access_mode mode;
+    union {
+        buffer_usage buffer;
+        image_usage image;
+    } usage_flags;
 };
 
 /// @brief Represents a set of interdependent tasks (forming a DAG) and resources.
@@ -66,7 +42,7 @@ class batch {
     friend class queue_impl;
 public:
     bool is_empty() const noexcept {
-        return tasks_.empty();
+        return tasks.empty();
     }
 
     /// @brief Adds a task.
@@ -75,6 +51,7 @@ public:
     /// already been modified to track their last use: throwing an exception here would leave the
     /// resources in an invalid state.
     void add_task(std::unique_ptr<task> task) noexcept;
+
 
     /// @brief Adds a managed temporary
     /// @param resource
@@ -93,25 +70,11 @@ public:
 
     void wait(vk::Semaphore timeline);
 
-    /// @brief Returns the first sequence number of the batch.
-    sequence_number start_sequence_number() const noexcept {
-        return start_sn_;
-    }
-
-    /// @brief Returns the last sequence number of the batch.
-    sequence_number finish_sequence_number() const noexcept {
-        return start_sn_ + tasks_.size();
-    }
-
-    /// @brief Sequence number of the next task.
-    sequence_number next_sequence_number() const noexcept {
-        return finish_sequence_number()+1;
-    }
 
     const task* get_task(uint64_t sequence_number) const noexcept {
-        if (start_sn_ <= sequence_number) {
-            const auto i = sequence_number - start_sn_;
-            if (i < tasks_.size()) { return tasks_[i].get(); }
+        if (start_sn < sequence_number) {
+            const auto i = sequence_number - start_sn - 1;
+            if (i < tasks.size()) { return tasks[i].get(); }
         }
         return nullptr;
     }
@@ -121,28 +84,20 @@ public:
     }
 
 private:
-    batch(device_impl_ptr device, sequence_number start_sn);
+    batch(device_impl_ptr device, serial_number start_sn);
 
-    void finalize_task_dag();
-    command_buffer_pool get_command_buffer_pool(recycled_batch_resources& recycled_resources);
-
-    /// @brief Returns whether writes to the specified resource in this batch could be seen 
-    /// by uses of the resource in subsequent batches.
-    /// @return 
-    bool writes_are_user_observable(resource& r) const noexcept;
 
     device_impl_ptr device_;
     /// @brief starting sequence number of the batch
     /// (base for submissions)
-    sequence_number start_sn_ = 0;
+    serial_number start_sn = 0;
     /// @brief all resources referenced in the batch (called "temporaries" for historical reasons)
-    std::vector<resource_ptr> temporaries_;
+    std::vector<resource_ptr> temporaries;
     /// @brief tasks
-    std::vector<std::unique_ptr<task>> tasks_;
+    std::vector<std::unique_ptr<task>> tasks;
     /// @brief Per-thread resources
-    std::vector<batch_thread_resources> threads_;
     /// @brief Semaphores used within the batch
-    std::vector<vk::Semaphore> semaphores_;
+    std::vector<vk::Semaphore> semaphores;
 };
 
 }  // namespace graal::detail

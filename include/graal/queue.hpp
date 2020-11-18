@@ -28,6 +28,7 @@ class queue_impl;
 
 //-----------------------------------------------------------------------------
 /// @brief Command handler.
+// TODO remove this class and expose submit_task directly instead?
 class handler {
     friend class queue;
     friend class detail::queue_impl;

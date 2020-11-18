@@ -158,7 +158,7 @@ device_and_queues create_vk_device_and_queues(
     // auto props2 = phy.device.getProperties2<vk::PhysicalDeviceProperties2,
     // vk::PhysicalDeviceTimelineSemaphoreProperties>();
 
-    const char* const device_extensions[] = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
+    const char* const device_extensions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
     vk::DeviceCreateInfo dci{
             .pNext = &features2,
@@ -229,6 +229,19 @@ device_impl::~device_impl() {
     // TODO wait?
     device_.destroy();
     instance_.destroy();
+}
+
+[[nodiscard]] vk::Semaphore device_impl::create_binary_semaphore() {
+    vk::Semaphore sem;
+    if (!free_semaphores_.fetch(sem)) {
+        vk::SemaphoreCreateInfo sci;
+        sem = device_.createSemaphore(sci);
+    }
+    return sem;
+}
+
+void device_impl::recycle_binary_semaphore(vk::Semaphore semaphore) {
+    free_semaphores_.recycle(std::move(semaphore));
 }
 
 }  // namespace detail

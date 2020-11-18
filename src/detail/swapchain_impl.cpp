@@ -73,13 +73,8 @@ swapchain_impl::swapchain_impl(device& device, range_2d framebuffer_size, vk::Su
 }
 
 swapchain_impl::~swapchain_impl() {
-    // XXX destroy swapchain
     const auto vk_device = device_.get_vk_device();
     vk_device.destroySwapchainKHR(swapchain_);
-}
-
-vk::Semaphore swapchain_image_impl::consume_semaphore(vk::Semaphore semaphore) {
-    return std::exchange(semaphore_, semaphore);
 }
 
 //-----------------------------------------------------------------------------
@@ -131,14 +126,20 @@ void swapchain_impl::resize(range_2d framebuffer_size, vk::SurfaceKHR surface) {
 
     // query swapchain images
     auto swapchain_images = vk_device.getSwapchainImagesKHR(swapchain_);
+    for (size_t i = 0; i < swapchain_images.size(); ++i) {
+        swapchain_images_.push_back(std::make_shared<swapchain_image_impl>(swapchain_images[i], i));
+    }
 }
 
-std::shared_ptr<swapchain_image_impl> swapchain_impl::acquire_next_image(
-        recycler<vk::Semaphore> semaphore_recycler) {
+std::shared_ptr<swapchain_image_impl> swapchain_impl::acquire_next_image() {
     auto vk_device = device_.get_vk_device();
 
+    auto image_available = device_.create_binary_semaphore();
     auto [result, image_index] =
-            vk_device.acquireNextImageKHR(swapchain_, 1000000000, nullptr, nullptr);
+            vk_device.acquireNextImageKHR(swapchain_, 1000000000, image_available, nullptr);
+    if (result == vk::Result::eTimeout) {
+        throw std::runtime_error{"timeout waiting for next swapchain image"};
+    }
 
     // Two options:
     // - either the image was never used before
@@ -147,14 +148,8 @@ std::shared_ptr<swapchain_image_impl> swapchain_impl::acquire_next_image(
     //
     // Since queue_impl::present consumes the image_available_ semaphore if it was not consumed earlier in the frame,
     // we can be sure that image_available_ is consumed.
-    assert(!swapchain_images_[image_index]->semaphore_);
-
-    vk::Semaphore image_available;
-    if (!semaphore_recycler.fetch(image_available)) {
-        vk::SemaphoreCreateInfo sci;
-        image_available = vk_device.createSemaphore(sci);
-    }
-    swapchain_images_[image_index]->semaphore_ = image_available;
+    assert(!swapchain_images_[image_index]->wait_semaphore);
+    swapchain_images_[image_index]->wait_semaphore = image_available;
     return swapchain_images_[image_index];
 }
 

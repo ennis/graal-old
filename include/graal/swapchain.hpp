@@ -3,6 +3,7 @@
 #include <graal/range.hpp>
 
 #include <vulkan/vulkan.hpp>
+#include <memory>
 
 namespace graal {
 namespace detail {
@@ -13,13 +14,18 @@ class swapchain_image_impl;
 
 /// @brief
 class swapchain_image {
+    friend class swapchain;
     friend class detail::queue_impl;
 
 public:
     // semaphore to synchronize with the presentation engine on first access
     vk::Semaphore image_available_semaphore() const;
 
+
 private:
+    swapchain_image(std::shared_ptr<detail::swapchain_image_impl> impl) : impl_{std::move(impl)} {
+    }
+
     std::shared_ptr<detail::swapchain_image_impl> impl_;
 };
 

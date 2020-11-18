@@ -585,6 +585,8 @@ int main() {
         q.schedule([&](handler& h) {
             //h.clear_color_image();  //
         });
+        q.present(std::move(next_image));
+        q.enqueue_pending_tasks();
 
         glfwSwapBuffers(window);
     }

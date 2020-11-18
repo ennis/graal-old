@@ -53,7 +53,7 @@ set(HEADERS
     "include/graal/ext/geometry.hpp"
     "include/graal/device.hpp"
     "include/graal/detail/vk_image.hpp" 
-    "include/graal/graphics_pipeline.hpp" "include/graal/instance.hpp" "include/graal/swapchain.hpp" "include/graal/detail/batch.hpp" "include/graal/detail/recycler.hpp"  "include/graal/detail/swapchain_impl.hpp" )
+    "include/graal/graphics_pipeline.hpp" "include/graal/instance.hpp" "include/graal/swapchain.hpp" "include/graal/detail/batch.hpp" "include/graal/detail/recycler.hpp"  "include/graal/detail/swapchain_impl.hpp"  "include/graal/detail/sequence_number.hpp" "include/graal/detail/command_buffer_pool.hpp")
 
 set(SOURCES
     "src/queue.cpp"

@@ -548,3 +548,14 @@ According to the vulkan spec (https://www.khronos.org/registry/vulkan/specs/1.2-
     	* recording commands in a command buffer
 
 So command buffer generation must happen after batch analysis
+
+## Shared vs unique semantics for user-facing objects?
+Right now buffer<>, image<> are copyable with shared reference semantics (inspired by SYCL).
+Switch to unique semantics instead?
+
+Problem: the underlying resource must be shared_ptr (references are stored in batches), so
+we must add weird unique semantics on top of shared_ptr. Plus, if shared semantics are needed,
+then must do `shared_ptr<image<>>`, which is a double pointer indirection (`shared_ptr<shared_ptr<image_impl>>`) 
+So, no.
+
+## Thread safety for external reference counting?

@@ -18,55 +18,51 @@
 
 namespace graal {
 
-template <image_type Type, bool HostVisible> class image;
+template<image_type Type, bool HostVisible>
+class image;
 
 struct image_properties {
-  std::optional<unsigned int> mip_levels = std::nullopt;
-  std::optional<unsigned int> array_layers = std::nullopt;
-  std::optional<unsigned int> num_samples = std::nullopt;
-  bool                        aliasable = false;
+    std::optional<unsigned int> mip_levels = std::nullopt;
+    std::optional<unsigned int> array_layers = std::nullopt;
+    std::optional<unsigned int> num_samples = std::nullopt;
+    bool aliasable = false;
 };
 
 struct virtual_tag_t {
-  explicit virtual_tag_t() = default;
+    explicit virtual_tag_t() = default;
 };
 inline constexpr virtual_tag_t virtual_image;
 
 namespace detail {
 
-inline constexpr allocation_flags
-get_allocation_flags(bool                    host_visible,
-                     const image_properties &props) noexcept {
+inline constexpr allocation_flags get_allocation_flags(
+        bool host_visible, const image_properties& props) noexcept {
     allocation_flags f{};
-  if (props.aliasable) {
-    f |= allocation_flag::aliasable;
-  }
-  if (host_visible) {
-    f |= allocation_flag::host_visible;
-  }
-  return f;
+    if (props.aliasable) { f |= allocation_flag::aliasable; }
+    if (host_visible) { f |= allocation_flag::host_visible; }
+    return f;
 }
 
-template <int Dimensions>
-inline constexpr range<3> extend_size(const range<Dimensions> &s) {
-  if constexpr (Dimensions == 1) {
-    return range{s[0], 1, 1};
-  } else if constexpr (Dimensions == 2) {
-    return range{s[0], s[1], 1};
-  } else {
-    return s;
-  }
+template<int Dimensions>
+inline constexpr range<3> extend_size(const range<Dimensions>& s) {
+    if constexpr (Dimensions == 1) {
+        return range{s[0], 1, 1};
+    } else if constexpr (Dimensions == 2) {
+        return range{s[0], s[1], 1};
+    } else {
+        return s;
+    }
 }
 
-template <int Dimensions>
-inline constexpr range<Dimensions> cast_size(const range<3> &s) {
-  if constexpr (Dimensions == 1) {
-    return range{s[0]};
-  } else if constexpr (Dimensions == 2) {
-    return range{s[0], s[1]};
-  } else {
-    return s;
-  }
+template<int Dimensions>
+inline constexpr range<Dimensions> cast_size(const range<3>& s) {
+    if constexpr (Dimensions == 1) {
+        return range{s[0]};
+    } else if constexpr (Dimensions == 2) {
+        return range{s[0], s[1]};
+    } else {
+        return s;
+    }
 }
 
 // TODO is there a use for partially-specified width and height?
@@ -74,24 +70,16 @@ inline constexpr range<Dimensions> cast_size(const range<3> &s) {
 
 /// @brief
 inline constexpr vk::SampleCountFlagBits get_vk_sample_count(unsigned samples) {
-  switch (samples) {
-  case 1:
-    return vk::SampleCountFlagBits::e1;
-  case 2:
-    return vk::SampleCountFlagBits::e2;
-  case 4:
-    return vk::SampleCountFlagBits::e4;
-  case 8:
-    return vk::SampleCountFlagBits::e8;
-  case 16:
-    return vk::SampleCountFlagBits::e16;
-  case 32:
-    return vk::SampleCountFlagBits::e32;
-  case 64:
-    return vk::SampleCountFlagBits::e64;
-  default:
-    throw std::runtime_error{"invalid sample count: not a power of two"};
-  }
+    switch (samples) {
+        case 1: return vk::SampleCountFlagBits::e1;
+        case 2: return vk::SampleCountFlagBits::e2;
+        case 4: return vk::SampleCountFlagBits::e4;
+        case 8: return vk::SampleCountFlagBits::e8;
+        case 16: return vk::SampleCountFlagBits::e16;
+        case 32: return vk::SampleCountFlagBits::e32;
+        case 64: return vk::SampleCountFlagBits::e64;
+        default: throw std::runtime_error{"invalid sample count: not a power of two"};
+    }
 }
 
 // TODO: should we pass the device to the constructor, or only when first using
@@ -99,131 +87,144 @@ inline constexpr vk::SampleCountFlagBits get_vk_sample_count(unsigned samples) {
 
 class image_impl : public virtual_resource {
 public:
-  image_impl(image_type type, allocation_flags flags) : type_{type} {}
-  image_impl(image_type type, image_format format, allocation_flags flags)
-      : type_{type}, format_{format} {}
-  image_impl(image_type type, range<3> size, allocation_flags flags)
-      : type_{type}, size_{size} {}
-
-  image_impl(image_type type, image_format format, range<3> size,
-             allocation_flags flags)
-      : type_{type}, format_{format}, size_{size} {}
-
-  //-------------------------------------------------------
-  void set_size(const range<3> &s) {
-    if (size_ != s) {
-      throw std::logic_error{"size already specified"};
+    image_impl(image_type type, allocation_flags flags) :
+        virtual_resource{resource_type::image}, type_{type} {
     }
-    size_ = s;
-  }
-
-  void set_format(image_format format) {
-    if (format_ != format) {
-      throw std::logic_error{"format already specified"};
+    image_impl(image_type type, image_format format, allocation_flags flags) :
+        virtual_resource{resource_type::image}, type_{type}, format_{format} {
     }
-    format_ = format;
-  }
-
-  void set_mipmaps(unsigned num_mipmaps) {
-    if (mipmaps_ != num_mipmaps) {
-      throw std::logic_error{"mipmaps already specified"};
+    image_impl(image_type type, range<3> size, allocation_flags flags) :
+        virtual_resource{resource_type::image}, type_{type}, size_{size} {
     }
-    mipmaps_ = num_mipmaps;
-  }
 
-  void set_samples(unsigned num_samples) {
-    if (samples_ != num_samples) {
-      throw std::logic_error{"samples already specified"};
+    image_impl(image_type type, image_format format, range<3> size, allocation_flags flags) :
+        virtual_resource{ resource_type::image }, type_{type}, format_{format}, size_{size} {
     }
-    samples_ = num_samples;
-  }
 
-  void set_array_layers(unsigned array_layers) {
-    if (array_layers_ != array_layers) {
-      throw std::logic_error{"array layers already specified"};
+    //-------------------------------------------------------
+    void set_size(const range<3>& s) {
+        if (size_ != s) { throw std::logic_error{"size already specified"}; }
+        size_ = s;
     }
-    array_layers_ = array_layers;
-  }
 
-  //-------------------------------------------------------
-  bool has_size() const noexcept { return size_.has_value(); }
-
-  bool has_format() const noexcept { return format_.has_value(); }
-
-  bool has_mipmaps() const noexcept { return mipmaps_.has_value(); }
-
-  bool has_samples() const noexcept { return samples_.has_value(); }
-
-  bool has_array_layers() const noexcept { return array_layers_.has_value(); }
-
-  //-------------------------------------------------------
-  size_t width() const { return size_.value()[0]; }
-  size_t height() const { return size_.value()[1]; }
-  size_t depth() const { return size_.value()[2]; }
-
-  range<3> size() const {
-    if (!size_.has_value()) {
-      throw std::logic_error("size was unspecified");
+    void set_format(image_format format) {
+        if (format_ != format) { throw std::logic_error{"format already specified"}; }
+        format_ = format;
     }
-    return size_.value();
-  }
 
-  image_format format() const {
-    if (!has_format()) {
-      throw std::logic_error("format was unspecified");
+    void set_mipmaps(unsigned num_mipmaps) {
+        if (mipmaps_ != num_mipmaps) { throw std::logic_error{"mipmaps already specified"}; }
+        mipmaps_ = num_mipmaps;
     }
-    return format_.value();
-  }
 
-  unsigned mipmaps() const { return mipmaps_.value(); }
-
-  unsigned samples() const { return samples_.value(); }
-
-  unsigned array_layers() const { return array_layers_.value(); }
-
-  bool is_fully_specified() const noexcept {
-    // the only things we need are the size and the format; for the rest, we can
-    // use default values
-    return has_size() && has_format();
-  }
-
-  void add_usage_flags(vk::ImageUsageFlags flags) {
-    if (image_) {
-      // can't set usage once the resource is created
-      throw std::logic_error{"image already created"};
+    void set_samples(unsigned num_samples) {
+        if (samples_ != num_samples) { throw std::logic_error{"samples already specified"}; }
+        samples_ = num_samples;
     }
-    usage_ = usage_ | flags;
-  }
 
-  vk::Image get_vk_image(device &dev);
+    void set_array_layers(unsigned array_layers) {
+        if (array_layers_ != array_layers) {
+            throw std::logic_error{"array layers already specified"};
+        }
+        array_layers_ = array_layers;
+    }
 
-  allocation_requirements
-  get_allocation_requirements(device_impl_ptr device) override;
+    //-------------------------------------------------------
+    bool has_size() const noexcept {
+        return size_.has_value();
+    }
 
-  /// @brief See resource::bind_memory
-  void bind_memory(device_impl_ptr device, VmaAllocation allocation,
-                   VmaAllocationInfo allocation_info) override;
+    bool has_format() const noexcept {
+        return format_.has_value();
+    }
+
+    bool has_mipmaps() const noexcept {
+        return mipmaps_.has_value();
+    }
+
+    bool has_samples() const noexcept {
+        return samples_.has_value();
+    }
+
+    bool has_array_layers() const noexcept {
+        return array_layers_.has_value();
+    }
+
+    //-------------------------------------------------------
+    size_t width() const {
+        return size_.value()[0];
+    }
+    size_t height() const {
+        return size_.value()[1];
+    }
+    size_t depth() const {
+        return size_.value()[2];
+    }
+
+    range<3> size() const {
+        if (!size_.has_value()) { throw std::logic_error("size was unspecified"); }
+        return size_.value();
+    }
+
+    image_format format() const {
+        if (!has_format()) { throw std::logic_error("format was unspecified"); }
+        return format_.value();
+    }
+
+    unsigned mipmaps() const {
+        return mipmaps_.value();
+    }
+
+    unsigned samples() const {
+        return samples_.value();
+    }
+
+    unsigned array_layers() const {
+        return array_layers_.value();
+    }
+
+    bool is_fully_specified() const noexcept {
+        // the only things we need are the size and the format; for the rest, we can
+        // use default values
+        return has_size() && has_format();
+    }
+
+    void add_usage_flags(vk::ImageUsageFlags flags) {
+        if (image_) {
+            // can't set usage once the resource is created
+            throw std::logic_error{"image already created"};
+        }
+        usage_ = usage_ | flags;
+    }
+
+    vk::Image get_vk_image(device& dev);
+
+    allocation_requirements get_allocation_requirements(device_impl_ptr device) override;
+
+    /// @brief See resource::bind_memory
+    void bind_memory(device_impl_ptr device, VmaAllocation allocation,
+            VmaAllocationInfo allocation_info) override;
 
 protected:
-  // Creates the VkImage without binding memory
-  vk::Image get_unbound_vk_image(device_impl_ptr dev);
+    // Creates the VkImage without binding memory
+    vk::Image get_unbound_vk_image(device_impl_ptr dev);
 
-  device_impl_ptr             device_impl_;
-  image_type                  type_;
-  allocation_flags            allocation_flags_;
-  std::optional<range<3>>     size_;
-  std::optional<image_format> format_;
-  std::optional<unsigned>     samples_;         // multisample count
-  std::optional<unsigned>     mipmaps_;         // mipmap count
-  std::optional<unsigned>     array_layers_;    // num array layers
-  vk::Image                   image_;           // nullptr if not created yet
-  VmaAllocation               allocation_;      // nullptr if not allocated yet
-  VmaAllocationInfo           allocation_info_; // allocation info
-  vk::ImageUsageFlags usage_; // vulkan image usage flags; can add usages until
-                              // the image is created
+    device_impl_ptr device_impl_;
+    image_type type_;
+    allocation_flags allocation_flags_;
+    std::optional<range<3>> size_;
+    std::optional<image_format> format_;
+    std::optional<unsigned> samples_;  // multisample count
+    std::optional<unsigned> mipmaps_;  // mipmap count
+    std::optional<unsigned> array_layers_;  // num array layers
+    vk::Image image_;  // nullptr if not created yet
+    VmaAllocation allocation_;  // nullptr if not allocated yet
+    VmaAllocationInfo allocation_info_;  // allocation info
+    vk::ImageUsageFlags usage_;  // vulkan image usage flags; can add usages until
+            // the image is created
 };
 
-} // namespace detail
+}  // namespace detail
 
 // the delayed image specification is purely an ergonomic decision
 // this is because we expect to support functions of the form:
@@ -233,189 +234,210 @@ protected:
 // where the filter (the callee) decides the size of the image,
 // but the *caller* decides other properties of the image, such as its required
 // access (evaluation only, or externally visible)
+ 
 
 /// @brief Represents an image.
 /// @tparam Type
 /// @tparam ExternalAccess
-template <image_type Type, bool HostVisible = false> class image final {
-  template <image_type Type, image_usage Usage, access_mode AccessMode,
-            bool HostVisible>
-  friend class image_accessor_base;
-  friend class handler;
+template<image_type Type, bool HostVisible = false>
+class image final 
+{
+
+    template<image_type Type, image_usage Usage, access_mode AccessMode, bool HostVisible>
+    friend class image_accessor_base;
+    friend class handler;
 
 public:
-  using impl_t = detail::image_impl;
-  using image_size_t = image_size<Type>;
+    using impl_t = detail::image_impl;
+    using image_size_t = image_size<Type>;
 
-  static constexpr int Extents = num_extents(Type);
+    static constexpr int Extents = num_extents(Type);
 
-  image(const image_properties &props = {})
-      : impl_{std::make_shared<impl_t>(
-            Type, detail::get_allocation_flags(HostVisible, props))} {
-    apply_image_properties(props);
-  }
+    image(const image_properties& props = {}) :
+        impl_{std::make_shared<impl_t>(Type, detail::get_allocation_flags(HostVisible, props))} 
+    {
+        apply_image_properties(props);
+    }
 
-  image(image_format format, const image_properties &props = {})
-      : impl_{std::make_shared<impl_t>(
-            Type, format, detail::get_allocation_flags(HostVisible, props))} {
-    apply_image_properties(props);
-  }
+    image(image_format format, const image_properties& props = {}) :
+        impl_{std::make_shared<impl_t>(
+                Type, format, detail::get_allocation_flags(HostVisible, props))} 
+    {
+        apply_image_properties(props);
+    }
 
-  image(image_size_t size, const image_properties &props = {})
-      : impl_{std::make_shared<impl_t>(
-            Type, size, detail::get_allocation_flags(HostVisible, props))} {
-    apply_image_properties(props);
-  }
+    image(image_size_t size, const image_properties& props = {}) :
+        impl_{std::make_shared<impl_t>(
+                Type, size, detail::get_allocation_flags(HostVisible, props))}
+    {
+        apply_image_properties(props);
+    }
 
-  image(image_format format, image_size_t size,
-        const image_properties &props = {})
-      : impl_{std::make_shared<impl_t>(
-            Type, format, detail::extend_size(size),
-            detail::get_allocation_flags(HostVisible, props))} {
-    apply_image_properties(props);
-  }
+    image(image_format format, image_size_t size, const image_properties& props = {}) :
+        impl_{std::make_shared<impl_t>(Type, format, detail::extend_size(size),
+                detail::get_allocation_flags(HostVisible, props))}
+    {
+        apply_image_properties(props);
+    }
 
-  image(virtual_tag_t, const image_properties &props = {})
-      : impl_{std::make_shared<impl_t>(
-            Type, detail::get_allocation_flags(HostVisible, props))} {
-    apply_image_properties(props);
-  }
+    image(virtual_tag_t, const image_properties& props = {}) :
+        impl_{std::make_shared<impl_t>(Type, detail::get_allocation_flags(HostVisible, props))}
+    {
+        apply_image_properties(props);
+    }
 
-  image(virtual_tag_t, image_format format, const image_properties &props = {})
-      : impl_{std::make_shared<impl_t>(
-            Type, format, detail::get_allocation_flags(HostVisible, props))} {
-    apply_image_properties(props);
-  }
+    image(virtual_tag_t, image_format format, const image_properties& props = {}) :
+        impl_{std::make_shared<impl_t>(
+                Type, format, detail::get_allocation_flags(HostVisible, props))} 
+    {
+        apply_image_properties(props);
+    }
 
-  image(virtual_tag_t, image_size_t size, const image_properties &props = {})
-      : impl_{std::make_shared<impl_t>(
-            Type, detail::extend_size(size),
-            detail::get_allocation_flags(HostVisible, props))} {
-    apply_image_properties(props);
-  }
+    image(virtual_tag_t, image_size_t size, const image_properties& props = {}) :
+        impl_{std::make_shared<impl_t>(Type, detail::extend_size(size),
+                detail::get_allocation_flags(HostVisible, props))}
+    {
+        apply_image_properties(props);
+    }
 
-  image(virtual_tag_t, image_format format, image_size_t size,
-        const image_properties &props = {})
-      : impl_{std::make_shared<impl_t>(
-            Type, format, detail::extend_size(size),
-            detail::get_allocation_flags(HostVisible, props))} {
-    apply_image_properties(props);
-  }
+    image(virtual_tag_t, image_format format, image_size_t size,
+            const image_properties& props = {}) :
+        impl_{std::make_shared<impl_t>(Type, format, detail::extend_size(size),
+                detail::get_allocation_flags(HostVisible, props))} 
+    {
+        apply_image_properties(props);
+    }
 
-  /// @brief
-  /// @param size
-  void set_size(const image_size_t &size) {
-    impl_->set_size(detail::extend_size(size));
-  }
 
-  /// @brief
-  /// @param format
-  void set_format(image_format format) { impl_->set_format(format); }
 
-  void set_mipmaps(unsigned num_mipmaps) {
-    impl_->set_mipmaps(num_mipmaps);
-  }
+    /// @brief
+    /// @param size
+    void set_size(const image_size_t& size) {
+        impl_->set_size(detail::extend_size(size));
+    }
 
-  void set_samples(unsigned num_samples) {
-    impl_->set_samples(num_samples);
-  }
+    /// @brief
+    /// @param format
+    void set_format(image_format format) {
+        impl_->set_format(format);
+    }
 
-  void set_array_layers(unsigned array_layers) {
-    impl_->set_array_layers(array_layers);
-  }
+    void set_mipmaps(unsigned num_mipmaps) {
+        impl_->set_mipmaps(num_mipmaps);
+    }
 
-  /// @brief Combines the specified usage with the current image usage flags.
-  /// @param usage 
-  /// You don't need to call this function when using images with accessors,
-  /// as the accessors will set automatically set proper image flags.
-  void add_usage_flags(vk::ImageUsageFlags usage) {
-      impl_->add_usage_flags(usage);
-  }
+    void set_samples(unsigned num_samples) {
+        impl_->set_samples(num_samples);
+    }
 
-  /// @brief
-  /// @return
-  [[nodiscard]] bool has_size() const noexcept { return impl_->has_size(); }
+    void set_array_layers(unsigned array_layers) {
+        impl_->set_array_layers(array_layers);
+    }
 
-  /// @brief
-  /// @return
-  [[nodiscard]] bool has_format() const noexcept { return impl_->has_format(); }
+    /// @brief Combines the specified usage with the current image usage flags.
+    /// @param usage
+    /// You don't need to call this function when using images with accessors,
+    /// as the accessors will set automatically set proper image flags.
+    void add_usage_flags(vk::ImageUsageFlags usage) {
+        impl_->add_usage_flags(usage);
+    }
 
-  [[nodiscard]] bool has_mipmaps() const noexcept {
-    return impl_->has_mipmaps();
-  }
+    /// @brief
+    /// @return
+    [[nodiscard]] bool has_size() const noexcept {
+        return impl_->has_size();
+    }
 
-  [[nodiscard]] bool has_samples() const noexcept {
-    return impl_->has_samples();
-  }
+    /// @brief
+    /// @return
+    [[nodiscard]] bool has_format() const noexcept {
+        return impl_->has_format();
+    }
 
-  [[nodiscard]] bool has_array_layers() const noexcept {
-    return impl_->has_array_layers();
-  }
+    [[nodiscard]] bool has_mipmaps() const noexcept {
+        return impl_->has_mipmaps();
+    }
 
-  /// @brief
-  /// @return
-  [[nodiscard]] size_t width() const { return impl_->width(); }
+    [[nodiscard]] bool has_samples() const noexcept {
+        return impl_->has_samples();
+    }
 
-  /// @brief
-  /// @return
-  template <int D = Extents>
-  [[nodiscard]] std::enable_if_t<D >= 2, size_t> height() const {
-    return impl_->height();
-  }
+    [[nodiscard]] bool has_array_layers() const noexcept {
+        return impl_->has_array_layers();
+    }
 
-  /// @brief
-  /// @return
-  template <int D = Extents>
-  [[nodiscard]] std::enable_if_t<D >= 3, size_t> depth() const {
-    return impl_->depth();
-  }
+    /// @brief
+    /// @return
+    [[nodiscard]] size_t width() const {
+        return impl_->width();
+    }
 
-  /// @brief
-  /// @return
-  [[nodiscard]] image_format format() const { return impl_->format(); }
+    /// @brief
+    /// @return
+    template<int D = Extents>
+    [[nodiscard]] std::enable_if_t<D >= 2, size_t> height() const {
+        return impl_->height();
+    }
 
-  /// @brief
-  /// @return
-  [[nodiscard]] unsigned mipmaps() const { return impl_->mipmaps(); }
+    /// @brief
+    /// @return
+    template<int D = Extents>
+    [[nodiscard]] std::enable_if_t<D >= 3, size_t> depth() const {
+        return impl_->depth();
+    }
 
-  /// @brief
-  /// @return
-  [[nodiscard]] unsigned samples() const { return impl_->samples(); }
+    /// @brief
+    /// @return
+    [[nodiscard]] image_format format() const {
+        return impl_->format();
+    }
 
-  [[nodiscard]] unsigned array_layers() const { return impl_->array_layers(); }
+    /// @brief
+    /// @return
+    [[nodiscard]] unsigned mipmaps() const {
+        return impl_->mipmaps();
+    }
 
-  /*template <bool Ext = HostVisible> std::enable_if_t<!Ext> discard() {
+    /// @brief
+    /// @return
+    [[nodiscard]] unsigned samples() const {
+        return impl_->samples();
+    }
+
+    [[nodiscard]] unsigned array_layers() const {
+        return impl_->array_layers();
+    }
+
+    /*template <bool Ext = HostVisible> std::enable_if_t<!Ext> discard() {
     return impl_->discard();
   }*/
 
-  /// @brief
-  /// @return
-  [[nodiscard]] image_size_t size() const {
-    return detail::cast_size<Extents>(impl_->size());
-  }
+    /// @brief
+    /// @return
+    [[nodiscard]] image_size_t size() const {
+        return detail::cast_size<Extents>(impl_->size());
+    }
 
-  /// @brief
-  /// @return
-  [[nodiscard]] std::string_view name() const noexcept { return impl_->name(); }
+    /// @brief
+    /// @return
+    [[nodiscard]] std::string_view name() const noexcept {
+        return impl_->name();
+    }
 
-  /// @brief
-  /// @param name
-  void set_name(std::string name) { impl_->set_name(std::move(name)); }
+    /// @brief
+    /// @param name
+    void set_name(std::string name) {
+        impl_->set_name(std::move(name));
+    }
 
 private:
-  void apply_image_properties(const image_properties &props) {
-    if ((bool)props.array_layers) {
-      set_array_layers(props.array_layers.value());
+    void apply_image_properties(const image_properties& props) {
+        if ((bool) props.array_layers) { set_array_layers(props.array_layers.value()); }
+        if ((bool) props.mip_levels) { set_mipmaps(props.mip_levels.value()); }
+        if ((bool) props.num_samples) { set_samples(props.num_samples.value()); }
     }
-    if ((bool)props.mip_levels) {
-      set_mipmaps(props.mip_levels.value());
-    }
-    if ((bool)props.num_samples) {
-      set_samples(props.num_samples.value());
-    }
-  }
 
-  std::shared_ptr<impl_t> impl_;
+    detail::user_resource_ptr<impl_t> impl_;
 };
 
 using image_1d = image<image_type::image_1d>;
@@ -459,4 +481,4 @@ template <int D> image(virtual_tag_t, image_format, range<D>, const image_proper
     -> image<extents_to_image_type(D), false>;
 // clang-format on
 
-} // namespace graal
+}  // namespace graal
