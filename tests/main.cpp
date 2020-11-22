@@ -367,16 +367,23 @@ pipeline_states init_pipeline(device& dev) {
     image NAME{virtual_image, image_format::r16g16_sfloat, range{1280, 720}}; \
     NAME.set_name(#NAME);
 
-#define READ(img)                                                                \
-    h.add_image_access(img, access_mode::read_only, image_usage::sampled_image); \
+#define READ(img)                                                                                  \
+    h.add_image_access(img, vk::AccessFlagBits::eShaderRead,                                       \
+            vk::PipelineStageFlagBits::eVertexShader | vk::PipelineStageFlagBits::eFragmentShader, \
+            {}, vk::ImageLayout::eShaderReadOnlyOptimal);                                          \
     img.add_usage_flags(vk::ImageUsageFlagBits::eSampled);
 
-#define DRAW(img)                                                                    \
-    h.add_image_access(img, access_mode::read_write, image_usage::color_attachment); \
+#define DRAW(img)                                                      \
+    h.add_image_access(img, vk::AccessFlagBits::eColorAttachmentWrite, \
+            vk::PipelineStageFlagBits::eColorAttachmentOutput,         \
+            vk::PipelineStageFlagBits::eColorAttachmentOutput,         \
+            vk::ImageLayout::eColorAttachmentOptimal);                 \
     img.add_usage_flags(vk::ImageUsageFlagBits::eColorAttachment);
 
-#define WRITE(img)                                                                \
-    h.add_image_access(img, access_mode::write_only, image_usage::storage_image); \
+#define WRITE(img)                                                                  \
+    h.add_image_access(img, vk::AccessFlagBits::eShaderWrite,                       \
+            vk::PipelineStageFlagBits::eFragmentShader,                             \
+            vk::PipelineStageFlagBits::eFragmentShader, vk::ImageLayout::eGeneral); \
     img.add_usage_flags(vk::ImageUsageFlagBits::eStorage);
 
 void test_shader(device& device);

@@ -19,34 +19,28 @@ inline constexpr task_index invalid_task_index = (std::size_t) -1;
 
 /// @brief Task callback
 using submit_callback_fn = void(vk::CommandBuffer);
-using present_callback_fn = void(vk::Queue);
-
-enum class task_type {
-    submit,  // submit_task
-    present  // present_task
-};
 
 /// @brief Maximum number of queues for the application
 constexpr inline size_t max_queues = 4;
 
+/// @brief Represents a resource access in a task.
+struct resource_access_details {
+    vk::ImageLayout layout;  // only valid if resource is an image
+    vk::AccessFlags access_flags;
+    vk::PipelineStageFlags input_stage; // stage that reads the resource (can be empty for write-only)
+    vk::PipelineStageFlags output_stage; // stage that writes to the resource (can be empty for read-only)
+};
+
 struct task {
-    void add_read(temporary_index r);
-    void add_write(temporary_index w);
+    struct resource_access {
+        size_t index;
+        resource_access_details details;
+    };
 
-    bool needs_synchronization() const noexcept {
-        return !wait_binary.empty() || !signal_binary.empty() || signal.enabled
-               || std::any_of(waits, waits + max_queues, [](uint64_t x) { return x > 0; });
-    }
-
-    task_type type = task_type::submit;
     std::string name;
     serial_number serial;
-
-    std::vector<temporary_index> reads;
-    std::vector<temporary_index> writes;
     std::vector<uint64_t> preds;
     std::vector<uint64_t> succs;
-
     uint64_t waits[max_queues] = {};
 
     struct {
@@ -56,19 +50,9 @@ struct task {
         uint64_t serial : 61 = 0;  // task sequence number
     } signal;
 
-    // binary semaphores to wait for (owned)
     std::vector<vk::Semaphore> wait_binary;  // TODO unique_handle
-    // binary semaphores to signal (non-owned)
     std::vector<vk::Semaphore> signal_binary;
-};
-
-struct submit_task final : task {
-    std::vector<std::function<submit_callback_fn>> callbacks;
-};
-
-struct present_task final : task {
-    std::shared_ptr<swapchain_impl> swapchain;
-    int image_index;
+    std::vector<resource_access> accesses;
 };
 
 }  // namespace graal::detail

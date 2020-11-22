@@ -63,6 +63,11 @@ public:
 
     allocation_requirements get_allocation_requirements(device_impl_ptr dev) override;
 
+    void add_usage_flags(vk::BufferUsageFlags flags) noexcept {
+        // behavior undefined if buffer already created
+        usage_ = usage_ | flags;
+    }
+
 private:
     vk::Buffer get_unbound_vk_buffer(device_impl_ptr dev);
 

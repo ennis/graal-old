@@ -2,14 +2,13 @@
 #include <graal/device.hpp>
 #include <graal/range.hpp>
 
-#include <vulkan/vulkan.hpp>
 #include <memory>
+#include <vulkan/vulkan.hpp>
 
 namespace graal {
 namespace detail {
 class queue_impl;
 class swapchain_impl;
-class swapchain_image_impl;
 }  // namespace detail
 
 /// @brief
@@ -18,14 +17,12 @@ class swapchain_image {
     friend class detail::queue_impl;
 
 public:
-    // semaphore to synchronize with the presentation engine on first access
-    vk::Semaphore image_available_semaphore() const;
-
+    [[nodiscard]] uint32_t index() const noexcept;
+    [[nodiscard]] vk::SwapchainKHR get_vk_swapchain() const noexcept;
 
 private:
     swapchain_image(std::shared_ptr<detail::swapchain_image_impl> impl) : impl_{std::move(impl)} {
     }
-
     std::shared_ptr<detail::swapchain_image_impl> impl_;
 };
 

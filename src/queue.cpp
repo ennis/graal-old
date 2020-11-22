@@ -2,8 +2,6 @@
 #include <graal/detail/swapchain_impl.hpp>
 #include <graal/queue.hpp>
 
-#include <fstream>
-#include <chrono>
 #include <fmt/format.h>
 #include <algorithm>
 #include <boost/dynamic_bitset.hpp>
@@ -16,6 +14,37 @@
 namespace graal {
 namespace detail {
 namespace {
+
+inline constexpr bool is_read_access(vk::AccessFlags flags) {
+    return !!(flags
+              & (vk::AccessFlagBits::eIndirectCommandRead | vk::AccessFlagBits::eIndexRead
+                      | vk::AccessFlagBits::eVertexAttributeRead | vk::AccessFlagBits::eUniformRead
+                      | vk::AccessFlagBits::eInputAttachmentRead | vk::AccessFlagBits::eShaderRead
+                      | vk::AccessFlagBits::eColorAttachmentRead
+                      | vk::AccessFlagBits::eDepthStencilAttachmentRead
+                      | vk::AccessFlagBits::eTransferRead | vk::AccessFlagBits::eHostRead
+                      | vk::AccessFlagBits::eMemoryRead
+                      | vk::AccessFlagBits::eTransformFeedbackCounterReadEXT
+                      | vk::AccessFlagBits::eConditionalRenderingReadEXT
+                      | vk::AccessFlagBits::eColorAttachmentReadNoncoherentEXT
+                      | vk::AccessFlagBits::eAccelerationStructureReadKHR
+                      | vk::AccessFlagBits::eShadingRateImageReadNV
+                      | vk::AccessFlagBits::eFragmentDensityMapReadEXT
+                      | vk::AccessFlagBits::eCommandPreprocessReadNV
+                      | vk::AccessFlagBits::eAccelerationStructureReadNV));
+}
+
+inline constexpr bool is_write_access(vk::AccessFlags flags) {
+    return !!(flags
+              & (vk::AccessFlagBits::eShaderWrite | vk::AccessFlagBits::eColorAttachmentWrite
+                      | vk::AccessFlagBits::eDepthStencilAttachmentWrite
+                      | vk::AccessFlagBits::eTransferWrite | vk::AccessFlagBits::eHostWrite
+                      | vk::AccessFlagBits::eMemoryWrite
+                      | vk::AccessFlagBits::eTransformFeedbackWriteEXT
+                      | vk::AccessFlagBits::eTransformFeedbackCounterWriteEXT
+                      | vk::AccessFlagBits::eAccelerationStructureWriteKHR
+                      | vk::AccessFlagBits::eCommandPreprocessWriteNV));
+}
 
 /// Converts a vector of intrusive_ptr to a vector of raw pointers.
 template<typename T>
@@ -38,11 +67,17 @@ bool adjust_allocation_requirements(
     return true;
 }
 
+/// @brief A reference to a resource used in the batch (called "temporary" for historical reasons)
+struct temporary {
+    resource_ptr resource;
+    serial_number last_write;
+};
+
 /// @brief Whether two tasks can be merged inside the same submission
 /// @param
 /// @return
 bool needs_synchronization(const task& a, const task& b) {
-    return a.signal.queue != b.signal.queue || a.type != b.type;  // TODO async compute
+    return a.signal.queue != b.signal.queue;  // TODO async compute
 }
 
 std::string get_task_name(task_index index, const task& task) {
@@ -55,10 +90,9 @@ std::string get_object_name(std::size_t index, const named_object& obj) {
     return std::string{obj.name()};
 }
 
-
 using variable_set = boost::dynamic_bitset<uint64_t>;
-void dump_tasks(std::ostream& out, std::span<std::unique_ptr<task>> tasks,
-        std::span<resource_ptr> temporaries, std::span<variable_set> live_sets) {
+void dump_tasks(std::ostream& out, std::span<const task> tasks,
+        std::span<const temporary> temporaries, std::span<const variable_set> live_sets) {
     out << "digraph G {\n";
     out << "node [shape=record fontname=Consolas];\n";
 
@@ -67,32 +101,49 @@ void dump_tasks(std::ostream& out, std::span<std::unique_ptr<task>> tasks,
 
         out << "t_" << index << " [shape=record label=\"{";
         out << index;
-        if (!task->name.empty()) { out << "(" << task->name << ")"; }
+        if (!task.name.empty()) { out << "(" << task.name << ")"; }
         out << "|{{reads\\l|writes\\l|live\\l}|{";
         {
-            int i = 0;
-            for (auto r : task->reads) {
-                out << get_object_name(r, *temporaries[r]);
-                if (i != task->reads.size() - 1) { out << ","; }
-                ++i;
+            bool first = true;
+            for (const auto& a : task.accesses) {
+                if (is_read_access(a.details.access_flags)) {
+                    if (!first) {
+                        out << ",";
+                    } else {
+                        first = false;
+                    }
+                    out << get_object_name(a.index, *temporaries[a.index].resource);
+                    //out << "\\[" << to_string(a.details.access_flags) << "\\]";
+                }
             }
         }
         out << "\\l|";
         {
-            int i = 0;
-            for (auto w : task->writes) {
-                out << get_object_name(w, *temporaries[w]);
-                if (i != task->writes.size() - 1) { out << ","; }
-                ++i;
+            bool first = true;
+            for (const auto& a : task.accesses) {
+                if (is_write_access(a.details.access_flags)) {
+                    if (!first) {
+                        out << ",";
+                    } else {
+                        first = false;
+                    }
+                    out << get_object_name(a.index, *temporaries[a.index].resource);
+                    //out << "\\[" << to_string(a.details.access_flags) << "\\]";
+                }
             }
         }
         out << "\\l|";
 
         {
+            bool first = true;
             for (size_t t = 0; t < temporaries.size(); ++t) {
                 if (live_sets[index].test(t)) {
-                    out << get_object_name(t, *temporaries[t]);
-                    if (t != live_sets[index].size() - 1) { out << ","; }
+                    if (!first) {
+                        out << ",";
+                    } else {
+                        first = false;
+                    }
+                    out << get_object_name(t, *temporaries[t].resource);
                 }
             }
         }
@@ -101,7 +152,7 @@ void dump_tasks(std::ostream& out, std::span<std::unique_ptr<task>> tasks,
     }
 
     for (task_index i = 0; i < tasks.size(); ++i) {
-        for (auto pred : tasks[i]->preds) {
+        for (auto pred : tasks[i].preds) {
             out << "t_" << pred << " -> "
                 << "t_" << i << "\n";
         }
@@ -110,18 +161,10 @@ void dump_tasks(std::ostream& out, std::span<std::unique_ptr<task>> tasks,
     out << "}\n";
 }
 
+struct allocate_batch_memory_results {};
 
-struct allocate_batch_memory_results
-{
-
-};
-
-allocate_batch_memory_results allocate_batch_memory(
-    device_impl_ptr device,
-    serial_number start_sn,
-    std::span<std::unique_ptr<task>> tasks,
-    std::span<resource_ptr> temporaries)
-{
+allocate_batch_memory_results allocate_batch_memory(device_impl_ptr device, serial_number start_sn,
+        std::span<task> tasks, std::span<temporary> temporaries) {
     // --- start perf timer for submission
     namespace chrono = std::chrono;
     const auto start = chrono::high_resolution_clock::now();
@@ -155,7 +198,7 @@ allocate_batch_memory_results allocate_batch_memory(
     for (size_t i = 0; i < n_task; ++i) {
         // tasks already in topological order
         reachability[i].resize(n_task);
-        for (auto pred : tasks[i]->preds) {
+        for (auto pred : tasks[i].preds) {
             reachability[i].set(pred);
             reachability[i] |= reachability[pred];
         }
@@ -173,11 +216,10 @@ allocate_batch_memory_results allocate_batch_memory(
         use[i].resize(n_tmp);
         def[i].resize(n_tmp);
         live_sets[i].resize(n_tmp);
-        for (auto r : tasks[i]->reads) {
-            use[i].set(r);
-        }
-        for (auto w : tasks[i]->writes) {
-            def[i].set(w);
+
+        for (const auto& r : tasks[i].accesses) {
+            if (is_read_access(r.details.access_flags)) { use[i].set(r.index); }
+            if (is_write_access(r.details.access_flags)) { def[i].set(r.index); }
         }
     }
 
@@ -199,14 +241,14 @@ allocate_batch_memory_results allocate_batch_memory(
     // the resource was determined dead
     // kill_task.resize(num_temporaries, 0);
 
-    std::vector<allocation_requirements> allocations;   // OUTPUT
-    std::vector<size_t> alloc_map;                      // OUTPUT
-    alloc_map.resize(n_tmp, (size_t)-1);
+    std::vector<allocation_requirements> allocations;  // OUTPUT
+    std::vector<size_t> alloc_map;  // OUTPUT
+    alloc_map.resize(n_tmp, (size_t) -1);
 
     for (size_t i = 0; i < n_task; ++i) {
         // determine the resources live before this task
         live.reset();
-        for (auto p : tasks[i]->preds) {
+        for (auto p : tasks[i].preds) {
             live |= live_sets[p];
         }
 
@@ -256,16 +298,16 @@ allocate_batch_memory_results allocate_batch_memory(
         for (size_t t0 = 0; t0 < n_tmp; ++t0) {
             if (gen[t0]) {
 #ifdef GRAAL_TRACE_BATCH_SUBMIT
-                fmt::print("{:02d}: Live({})\n", i, temporaries[t0]->name());
+                fmt::print("{:02d}: Live({})\n", i, temporaries[t0].resource->name());
 #endif
-                auto& tmp0 = temporaries[t0];
+                auto& tmp0 = temporaries[t0].resource;
 
                 // skip if it doesn't need allocation
                 if (!tmp0->is_virtual()) continue;
                 if (tmp0->allocated) continue;
 
                 auto alloc_requirements =
-                    static_cast<virtual_resource&>(*tmp0).get_allocation_requirements(device);
+                        static_cast<virtual_resource&>(*tmp0).get_allocation_requirements(device);
                 // resource became alive, if possible, alias with a dead
                 // temporary, otherwise allocate a new one.
 
@@ -275,8 +317,7 @@ allocate_batch_memory_results allocate_batch_memory(
                     // an external handle to it.
                     allocations.push_back(alloc_requirements);
                     alloc_map.push_back(allocations.size() - 1);
-                }
-                else {
+                } else {
                     // whether we managed to find a dead resource to alias with
                     bool aliased = false;
                     for (size_t t1 = 0; t1 < n_tmp; ++t1) {
@@ -284,13 +325,13 @@ allocate_batch_memory_results allocate_batch_memory(
                         if (!dead[t1]) continue;
 
 #ifdef GRAAL_TRACE_BATCH_SUBMIT
-                        fmt::print(" | {}", temporaries[t1]->name());
+                        fmt::print(" | {}", temporaries[t1].resource->name());
 #endif
                         auto i_alloc = alloc_map[t1];
                         auto& dead_alloc_requirements = allocations[i_alloc];
 
                         if (adjust_allocation_requirements(
-                            dead_alloc_requirements, alloc_requirements)) {
+                                    dead_alloc_requirements, alloc_requirements)) {
                             // the two resources may alias; the requirements
                             // have been adjusted
                             alloc_map[t0] = i_alloc;
@@ -332,7 +373,7 @@ allocate_batch_memory_results allocate_batch_memory(
 #ifdef GRAAL_TRACE_BATCH_SUBMIT
         for (size_t t = 0; t < n_tmp; ++t) {
             if (kill[t]) {
-                fmt::print("{:02d}: Kill({})\n", i, temporaries[t]->name());
+                fmt::print("{:02d}: Kill({})\n", i, temporaries[t].resource->name());
                 // kill_task[t] = i;
             }
         }
@@ -358,13 +399,13 @@ allocate_batch_memory_results allocate_batch_memory(
           fmt::print("\n");
         }*/
 
-        // dump task graph with live-variable analysis to a graphviz file
+    // dump task graph with live-variable analysis to a graphviz file
     {
-        std::ofstream out_graphviz{ fmt::format("graal_test_{}.dot", start_sn), std::ios::trunc };
+        std::ofstream out_graphviz{fmt::format("graal_test_{}.dot", start_sn), std::ios::trunc};
         dump_tasks(out_graphviz, tasks, temporaries, live_sets);
     }
 #endif
-    return{};
+    return {};
 }
 
 }  // namespace
@@ -378,9 +419,9 @@ struct batch_thread_resources {
 struct batch {
     serial_number start_serial = 0;
     /// @brief all resources referenced in the batch (called "temporaries" for historical reasons)
-    std::vector<resource_ptr> temporaries;
+    std::vector<temporary> temporaries;
     /// @brief tasks
-    std::vector<std::unique_ptr<task>> tasks;
+    std::vector<task> tasks;
     /// @brief Per-thread resources
     std::vector<batch_thread_resources> threads;
     /// @brief Semaphores used within the batch
@@ -413,42 +454,36 @@ public:
     const task* get_unsubmitted_task(uint64_t sequence_number) const noexcept;
 
     task* get_unsubmitted_task(uint64_t sequence_number) noexcept {
-        return const_cast<task*>(static_cast<const queue_impl&>(*this).get_unsubmitted_task(sequence_number));
+        return const_cast<task*>(
+                static_cast<const queue_impl&>(*this).get_unsubmitted_task(sequence_number));
     }
 
-
-    [[nodiscard]] handler begin_build_task(std::string_view name) {
-        if (building_task_) { throw std::logic_error{"a task is already being built"}; }
-        building_task_ = true;
-        const auto task_sn = last_serial_ + 1;
-        auto t = std::make_unique<detail::submit_task>();
-        t->name = name;
-        t->serial = task_sn;
-        return handler{std::move(t)};
-    }
-
-    void end_build_task(handler&& h) {
-        for (auto& a : h.accesses_) {
-            add_resource_dependency(*h.task_, a.resource, a.mode);
-        }
-        batch_.tasks.push_back(std::move(h.task_));
-        building_task_ = false;
+    // returned reference only valid until next call to create_task or present.
+    [[nodiscard]] task& create_task(std::string_view name) noexcept {
+        batch_.tasks.push_back(task{});
+        auto& task = batch_.tasks.back();
         last_serial_++;
+        task.name = name;
+        task.serial = last_serial_;
+        return task;
     }
+
+    void add_task_dependency(task& t, serial_number before, bool use_binary_semaphore);
+
+    void add_resource_dependency(
+            task& t, resource_ptr resource, const resource_access_details& access);
 
 private:
     size_t get_resource_tmp_index(resource_ptr resource);
-    void finalize_batch();
     [[nodiscard]] command_buffer_pool get_command_buffer_pool();
-    void add_task_dependency(task& t, serial_number before, bool use_binary_semaphore);
-    void add_resource_dependency(task& t, resource_ptr resource, access_mode mode);
 
     /// @brief Returns whether writes to the specified resource in this batch could be seen
     /// by uses of the resource in subsequent batches.
     /// @return
     [[nodiscard]] bool writes_are_user_observable(resource& r) const noexcept;
 
-    bool building_task_ = false;
+    using resource_to_temporary_map = std::unordered_map<resource*, size_t>;
+
     queue_properties props_;
     device_impl_ptr device_;
     batch batch_;
@@ -457,6 +492,7 @@ private:
     std::deque<batch> in_flight_batches_;
     vk::Semaphore timelines_[max_queues];
     recycler<command_buffer_pool> cb_pools;
+    resource_to_temporary_map tmp_indices;  // for the current batch
 };
 
 queue_impl::queue_impl(device_impl_ptr device, const queue_properties& props) :
@@ -479,14 +515,16 @@ queue_impl::~queue_impl() {
 }
 
 size_t queue_impl::get_resource_tmp_index(resource_ptr resource) {
-    if (resource->tmp_index != invalid_temporary_index) {
-        // already added
-        return resource->tmp_index;
+    const auto next_tmp_index = batch_.temporaries.size();
+    const auto result = tmp_indices.insert({resource.get(), next_tmp_index});
+    if (result.second) {
+        // just inserted, create temporary
+        const auto last_write = resource->last_write_serial;
+        // init temporary with reference to resource and last write serial that was set on submission of the previous batch
+        batch_.temporaries.push_back(
+                temporary{.resource = std::move(resource), .last_write = last_write});
     }
-    const auto tmp_index = batch_.temporaries.size();
-    resource->tmp_index = tmp_index;
-    batch_.temporaries.push_back(resource);
-    return tmp_index;
+    return result.first->second;
 }
 
 command_buffer_pool queue_impl::get_command_buffer_pool() {
@@ -532,19 +570,18 @@ const task* queue_impl::get_submitted_task(uint64_t sequence_number) const noexc
         if (sequence_number <= start) { return nullptr; }
         if (sequence_number > start && sequence_number <= finish) {
             const auto i = sequence_number - start - 1;
-            return b.tasks[i].get();
+            return &b.tasks[i];
         }
     }
-    
+
     return nullptr;
 }
 
-const task* queue_impl::get_unsubmitted_task(uint64_t sequence_number) const noexcept 
-{
+const task* queue_impl::get_unsubmitted_task(uint64_t sequence_number) const noexcept {
     if (sequence_number <= batch_.start_serial) { return nullptr; }
     if (sequence_number <= batch_.finish_serial()) {
         const auto i = sequence_number - batch_.start_serial - 1;
-        return batch_.tasks[i].get();
+        return &batch_.tasks[i];
     }
     return nullptr;
 }
@@ -564,33 +601,45 @@ void queue_impl::enqueue_pending_tasks() {
             batch_.finish_serial());
 
     fmt::print("Temporaries:\n");
-    for (auto tmp : batch_.temporaries) {
-        if (tmp->name().empty()) {
-            fmt::print(" - temporary <unnamed> (discarded={})\n", tmp->has_user_refs());
-        } else {
-            fmt::print(" - temporary `{}` (discarded={})\n", tmp->name(), tmp->has_user_refs());
-        }
+    size_t tmp_index = 0;
+    for (const auto& tmp : batch_.temporaries) {
+        fmt::print(" - #{}: {} discarded={} last_write={}\n", tmp_index++,
+                tmp.resource->name().empty() ? "<unnamed>" : tmp.resource->name(),
+                tmp.resource->has_user_refs(), tmp.last_write);
     }
 
     fmt::print("Tasks:\n");
-    int task_index = 0;
+    size_t task_index = 0;
     for (auto&& t : batch_.tasks) {
-        if (t->name.empty()) {
-            fmt::print(" - task #{} (unnamed)\n", task_index);
-        } else {
-            fmt::print(" - task #{} `{}`\n", task_index, t->name);
-        }
-        if (!t->preds.empty()) {
+        fmt::print(" - task #{} {}\n", task_index, t.name.empty() ? "<unnamed>" : t.name);
+        if (!t.preds.empty()) {
             fmt::print("   preds: ");
-            for (auto pred : t->preds) {
+            for (auto pred : t.preds) {
                 fmt::print("{},", pred);
             }
             fmt::print("\n");
         }
-        if (!t->succs.empty()) {
+        if (!t.succs.empty()) {
             fmt::print("   succs: ");
-            for (auto s : t->succs) {
+            for (auto s : t.succs) {
                 fmt::print("{},", s);
+            }
+            fmt::print("\n");
+        }
+
+        if (!t.accesses.empty()) {
+            fmt::print("   accesses: \n");
+            for (const auto& access : t.accesses) {
+                fmt::print("      #{} flags={}\n"
+                           "          input_stage={}\n"
+                           "          output_stage={}\n",
+                        access.index, to_string(access.details.access_flags),
+                        to_string(access.details.input_stage),
+                        to_string(access.details.output_stage));
+                const auto ty = batch_.temporaries[access.index].resource->type();
+                if (ty == resource_type::image || ty == resource_type::swapchain_image) {
+                    fmt::print("          layout={}\n", to_string(access.details.layout));
+                }
             }
             fmt::print("\n");
         }
@@ -598,23 +647,21 @@ void queue_impl::enqueue_pending_tasks() {
     }
 #endif
 
-    // 
-    auto batch_resource_memory = allocate_batch_memory(device_, batch_.start_serial, batch_.tasks, batch_.temporaries);
-   
+    //
+    auto batch_resource_memory =
+            allocate_batch_memory(device_, batch_.start_serial, batch_.tasks, batch_.temporaries);
 
     // --- 3. set up external synchronization for resources that are could be accessed in the next batch
     // This can affect the creation of the submission batches (next step).
     for (size_t i = 0; i < n_tmp; ++i) {
-        auto& tmp = *batch_.temporaries[i];
+        auto& tmp = *batch_.temporaries[i].resource;
 
-        if (writes_are_user_observable(tmp))
-        {
+        if (writes_are_user_observable(tmp)) {
             fmt::print("Writes to {} are observable by the user.\n", get_object_name(i, tmp));
             // writes to this resource in the batch can be observed by user code afterwards
             auto producer = get_unsubmitted_task(tmp.last_write_serial);
             fmt::print("\t producer task {} (SN{}).\n",
-                    get_task_name(tmp.last_write_serial, *producer),
-                    tmp.last_write_serial);
+                    get_task_name(tmp.last_write_serial, *producer), tmp.last_write_serial);
 
             if (tmp.type() == resource_type::swapchain_image) {
                 // Special case: user observable swapchain images are synchronized with binary semaphores because presentation does not support timelines
@@ -622,9 +669,7 @@ void queue_impl::enqueue_pending_tasks() {
                 producer->signal_binary.push_back(semaphore);
                 auto prev_semaphore = std::exchange(tmp.wait_semaphore, semaphore);
                 // FIXME not sure what we know about the previous semaphore here (there shouldn't be one)
-                if (prev_semaphore) {
-                    device_->recycle_binary_semaphore(prev_semaphore);
-                }
+                if (prev_semaphore) { device_->recycle_binary_semaphore(prev_semaphore); }
             } else {
                 // use timeline
                 producer->signal.enabled = true;
@@ -636,8 +681,8 @@ void queue_impl::enqueue_pending_tasks() {
     for (size_t i = 0; i < n_task; ++i) {
         auto& task = batch_.tasks[i];
 
-        for (auto pred : batch_.tasks[i]->preds) {
-            if (needs_synchronization(*batch_.tasks[i], *batch_.tasks[pred])) {
+        for (auto pred : batch_.tasks[i].preds) {
+            if (needs_synchronization(batch_.tasks[i], batch_.tasks[pred])) {
                 //pre_sync = true;
                 //break;
             }
@@ -666,14 +711,14 @@ void queue_impl::enqueue_pending_tasks() {
         bool pre_sync = false;
         bool post_sync = false;
 
-        for (auto pred : batch_.tasks[i]->preds) {
-            if (needs_synchronization(*batch_.tasks[i], *batch_.tasks[pred])) {
+        for (auto pred : batch_.tasks[i].preds) {
+            if (needs_synchronization(batch_.tasks[i], batch_.tasks[pred])) {
                 pre_sync = true;
                 break;
             }
         }
-        for (auto succ : batch_.tasks[i]->succs) {
-            if (needs_synchronization(*batch_.tasks[i], *batch_.tasks[succ])) {
+        for (auto succ : batch_.tasks[i].succs) {
+            if (needs_synchronization(batch_.tasks[i], batch_.tasks[succ])) {
                 post_sync = true;
                 break;
             }
@@ -693,21 +738,24 @@ void queue_impl::enqueue_pending_tasks() {
         /*for (auto&& cmd : tasks_[i]->callbacks) {
             cmd(cb);
         }*/
-        auto task = batch_.tasks[i].get();
+        /*auto task = batch_.tasks[i].get();
         if (task->type == task_type::present) {
             auto present = static_cast<present_task*>(task);
+            const vk::Semaphore wait_semaphores[] = {present->wait_binary[0]};
+            const vk::SwapchainKHR swapchains[] = {present->swapchain};
+            const uint32_t image_indices[] = {present->image_index};
             vk::PresentInfoKHR present_info{
                     .waitSemaphoreCount = 1,
-                    .pWaitSemaphores = nullptr,
-                    .swapchainCount = {},
-                    .pSwapchains = {},
-                    .pImageIndices = {},
+                    .pWaitSemaphores = wait_semaphores,
+                    .swapchainCount = 1,
+                    .pSwapchains = swapchains,
+                    .pImageIndices = image_indices,
                     .pResults = {},
             };
 
             const auto graphics_queue = device_->get_graphics_queue();
             graphics_queue.presentKHR(present_info);
-        }
+        }*/
     }
 
     // pacing: wait for frame N - (max_batches_in_flight+1) before starting
@@ -767,21 +815,27 @@ void queue_impl::enqueue_pending_tasks() {
     batch_.tasks.clear();
 }
 
-void queue_impl::present(swapchain_image&& image) 
-{
-    auto image_impl = image.impl_.get();
+void queue_impl::present(swapchain_image&& image) {
+    enqueue_pending_tasks();
+    auto impl = std::move(image.impl_);
 
-    // --- build task
-    auto t = std::make_unique<present_task>();
-    t->name = "present";
-    t->type = task_type::present;
-    t->serial = last_serial_++;
-    //t->swapchain = image.swapchain();
-    //t->image_index = ...
+    // there should be a semaphore set on the resource
+    auto semaphore = std::exchange(impl->wait_semaphore, nullptr);
 
-    add_resource_dependency(*t, image.impl_, access_mode::read_only);
-    
-    batch_.tasks.push_back(std::move(t));
+    const vk::Semaphore wait_semaphores[] = {semaphore};
+    const vk::SwapchainKHR swapchains[] = {impl->get_vk_swapchain()};
+    const uint32_t image_indices[] = {impl->index()};
+    vk::PresentInfoKHR present_info{
+            .waitSemaphoreCount = 1,
+            .pWaitSemaphores = wait_semaphores,
+            .swapchainCount = 1,
+            .pSwapchains = swapchains,
+            .pImageIndices = image_indices,
+            .pResults = {},
+    };
+
+    const auto graphics_queue = device_->get_graphics_queue();
+    graphics_queue.presentKHR(present_info);
 }
 
 void queue_impl::wait_for_task(uint64_t sequence_number) {
@@ -810,19 +864,17 @@ void queue_impl::wait_for_task(uint64_t sequence_number) {
     }*/
 }
 
-
 /// @brief synchronizes two tasks
-/// @param before 
+/// @param before
 /// @param after Sequence number of the task to execute after. Must correspond to an unsubmitted task.
 /// @param use_binary_semaphore whether to synchronize using a binary semaphore.
 /// before < after; if use_binary_semaphore == true, then before must also correspond to an unsubmitted task.
-void queue_impl::add_task_dependency(task& t, serial_number before,  bool use_binary_semaphore)
-{
+void queue_impl::add_task_dependency(task& t, serial_number before, bool use_binary_semaphore) {
     assert(t.serial > before);
 
     if (before <= completed_serial_) {
         // no sync needed, task has already completed
-        return;     
+        return;
     }
 
     if (before <= batch_.start_serial) {
@@ -830,67 +882,70 @@ void queue_impl::add_task_dependency(task& t, serial_number before,  bool use_bi
         auto before_task = get_submitted_task(before);
         size_t q = before_task->signal.queue;
         t.waits[q] = std::max(t.waits[q], before);
-    }
-    else {
+    } else {
         // --- Intra-batch synchronization
-        const auto local_task_index = before - batch_.start_serial;  // SN relative to start of batch
-        auto before_task = batch_.tasks[local_task_index].get();
+        const auto local_task_index =
+                before - batch_.start_serial - 1;  // SN relative to start of batch
+        auto& before_task = batch_.tasks[local_task_index];
         t.preds.push_back(local_task_index);
-        // successors are updated 
-        before_task->succs.push_back(t.serial);
+        before_task.succs.push_back(t.serial - batch_.start_serial - 1);
     }
 }
 
 /// @brief Registers a resource access in a submit task
 /// @param resource
 /// @param mode
-void queue_impl::add_resource_dependency(task& t, resource_ptr resource, access_mode mode)
-{
+void queue_impl::add_resource_dependency(
+        task& t, resource_ptr resource, const resource_access_details& access) {
+    const auto tmp_index = get_resource_tmp_index(resource);
+    auto& tmp = batch_.temporaries[tmp_index];
+
     // does the resource carry a semaphore? if so, extract it and sync on that
     if (auto semaphore = std::exchange(resource->wait_semaphore, nullptr)) {
         t.wait_binary.push_back(semaphore);
-    }
-    else {
+    } else {
         // the resource does not carry a semaphore, sync on timeline
-        add_task_dependency(t, resource->last_write_serial, false);
+        add_task_dependency(t, tmp.last_write, false);
     }
 
-    if (mode == access_mode::read_write || mode == access_mode::write_only) {
+    //const bool reading = is_read_access(access.access_flags);
+    const bool writing = is_write_access(access.access_flags);
+
+    if (writing) {
         // we're writing to this resource: set last write SN
-        resource->last_write_serial = t.serial;
+        tmp.last_write = t.serial;
     }
 
-    const auto tmp_index = get_resource_tmp_index(resource);
-
-    switch (mode) {
-    case access_mode::read_only: t.add_read(tmp_index); break;
-    case access_mode::write_only: t.add_write(tmp_index); break;
-    case access_mode::read_write:
-        t.add_read(tmp_index);
-        t.add_write(tmp_index);
-        break;
-    }
+    // add resource dependency to the task and update resource usage flags
+    t.accesses.push_back(task::resource_access{.index = tmp_index, .details = access});
 }
 
 }  // namespace detail
 
-
 //-----------------------------------------------------------------------------
 
-void handler::add_buffer_access(
-        std::shared_ptr<detail::buffer_impl> buffer, access_mode mode, buffer_usage usage) {
-    add_resource_access(buffer, mode);
+// Called by buffer accessors to register an use of a buffer in a task
+void handler::add_buffer_access(std::shared_ptr<detail::buffer_impl> buffer,
+        vk::AccessFlags access_flags, vk::PipelineStageFlags input_stage,
+        vk::PipelineStageFlags output_stage) const {
+    detail::resource_access_details details;
+    details.layout = vk::ImageLayout::eUndefined;
+    details.access_flags = access_flags;
+    details.input_stage = input_stage;
+    details.output_stage = output_stage;
+    queue_.add_resource_dependency(task_, buffer, details);
 }
 
-void handler::add_image_access(
-        std::shared_ptr<detail::image_impl> image, access_mode mode, image_usage usage) {
-    add_resource_access(image, mode);
-    // TODO do something with usage? (layout transitions)
-}
-
-void handler::add_resource_access(
-        std::shared_ptr<detail::virtual_resource> resource, access_mode mode) {
-    accesses_.push_back(resource_access{.resource = std::move(resource), .mode = mode});
+// Called by image accessors to register an use of an image in a task
+void handler::add_image_access(std::shared_ptr<detail::image_impl> image,
+        vk::AccessFlags access_flags, vk::PipelineStageFlags input_stage,
+        vk::PipelineStageFlags output_stage, vk::ImageLayout layout) const {
+    detail::resource_access_details details;
+    details.layout = layout;
+    details.access_flags = access_flags;
+    details.input_stage = input_stage;
+    details.output_stage = output_stage;
+    queue_.add_resource_dependency(task_, image, details);
 }
 
 //-----------------------------------------------------------------------------
@@ -906,17 +961,12 @@ void queue::present(swapchain_image&& image) {
     impl_->present(std::move(image));
 }
 
-handler queue::begin_build_task(std::string_view name) const noexcept {
+detail::task& queue::create_task(std::string_view name) noexcept {
     // auto sequence_number = impl_->begin_build_task();
     // NOTE begin_build_task is not really necessary right now since the task object
     // is not created before the handler callback is executed,
     // but keep it anyway for future-proofing (we might want to know e.g. the task sequence number in the handler)
-    return impl_->begin_build_task(name);
-}
-
-/// @brief Called to finish building a task. Adds the task to the current batch.
-void queue::end_build_task(handler&& handler) {
-    impl_->end_build_task(std::move(handler));
+    return impl_->create_task(name);
 }
 
 /*

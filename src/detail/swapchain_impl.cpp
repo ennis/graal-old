@@ -120,37 +120,31 @@ void swapchain_impl::resize(range_2d framebuffer_size, vk::SurfaceKHR surface) {
 
     if (swapchain_) {
         vk_device.destroySwapchainKHR(swapchain_);
-        swapchain_images_.clear();
+        images_.clear();
     }
-    swapchain_ = new_swapchain;
 
-    // query swapchain images
-    auto swapchain_images = vk_device.getSwapchainImagesKHR(swapchain_);
-    for (size_t i = 0; i < swapchain_images.size(); ++i) {
-        swapchain_images_.push_back(std::make_shared<swapchain_image_impl>(swapchain_images[i], i));
-    }
+    swapchain_ = new_swapchain;
+    images_ = vk_device.getSwapchainImagesKHR(swapchain_);
 }
 
-std::shared_ptr<swapchain_image_impl> swapchain_impl::acquire_next_image() {
-    auto vk_device = device_.get_vk_device();
+std::shared_ptr<swapchain_image_impl> swapchain_impl::acquire_next_image(
+        std::shared_ptr<swapchain_impl> swapchain) {
+    auto vk_device = swapchain->device_.get_vk_device();
 
-    auto image_available = device_.create_binary_semaphore();
-    auto [result, image_index] =
-            vk_device.acquireNextImageKHR(swapchain_, 1000000000, image_available, nullptr);
+    auto image_available = swapchain->device_.create_binary_semaphore();
+    auto [result, image_index] = vk_device.acquireNextImageKHR(
+            swapchain->swapchain_, 1000000000, image_available, nullptr);
     if (result == vk::Result::eTimeout) {
         throw std::runtime_error{"timeout waiting for next swapchain image"};
     }
 
-    // Two options:
-    // - either the image was never used before
-    // - or the image was handed back to the presentation engine (via queue_impl::present and QueuePresent)
-    // AcquireNextImage cannot return already acquired images.
-    //
-    // Since queue_impl::present consumes the image_available_ semaphore if it was not consumed earlier in the frame,
-    // we can be sure that image_available_ is consumed.
-    assert(!swapchain_images_[image_index]->wait_semaphore);
-    swapchain_images_[image_index]->wait_semaphore = image_available;
-    return swapchain_images_[image_index];
+    // TODO we don't need to allocate a new swapchain_image_impl every time, we
+    // could just create an aliased shared_ptr to a swapchain_image_impl stored
+    // within swapchain_impl
+    auto img = std::make_shared<swapchain_image_impl>(
+            std::move(swapchain), swapchain->images_[image_index], image_index);
+    img->wait_semaphore = image_available;
+    return img;
 }
 
 }  // namespace graal::detail

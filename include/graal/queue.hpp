@@ -11,7 +11,6 @@
 #include <graal/detail/image_resource.hpp>
 #include <graal/detail/named_object.hpp>
 #include <graal/detail/resource.hpp>
-#include <graal/detail/task.hpp>
 #include <graal/device.hpp>
 #include <graal/image.hpp>
 #include <graal/image_format.hpp>
@@ -24,6 +23,7 @@ namespace graal {
 
 namespace detail {
 class queue_impl;
+struct task;
 }  // namespace detail
 
 //-----------------------------------------------------------------------------
@@ -50,42 +50,38 @@ public:
 
     // Called by buffer accessors to register an use of a buffer in a task
     template<typename T, bool HostVisible>
-    void add_buffer_access(buffer<T, HostVisible>& buffer, access_mode mode, buffer_usage usage) {
-        add_buffer_access(buffer.impl_, mode, usage);
+    void add_buffer_access(buffer<T, HostVisible>& buffer, vk::AccessFlags access_flags,
+            vk::PipelineStageFlags input_stage, vk::PipelineStageFlags output_stage) const {
+        add_buffer_access(buffer.impl_, access_flags, input_stage, output_stage);
     }
 
     // Called by image accessors to register an use of an image in a task
     template<image_type Type, bool HostVisible>
-    void add_image_access(image<Type, HostVisible> image, access_mode mode, image_usage usage) {
-        add_image_access(image.impl_, mode, usage);
+    void add_image_access(image<Type, HostVisible> image, vk::AccessFlags access_flags,
+            vk::PipelineStageFlags input_stage, vk::PipelineStageFlags output_stage,
+            vk::ImageLayout layout) const {
+        add_image_access(image.impl_, access_flags, input_stage, output_stage, layout);
     }
 
 private:
-    handler(std::unique_ptr<detail::submit_task> task) : task_{std::move(task)} {
+    handler(detail::queue_impl& queue, detail::task& task) : queue_{queue}, task_{task} {
     }
 
     // Called by buffer accessors to register an use of a buffer in a task
-    void add_buffer_access(
-            std::shared_ptr<detail::buffer_impl> buffer, access_mode mode, buffer_usage usage);
+    void add_buffer_access(std::shared_ptr<detail::buffer_impl> buffer,
+            vk::AccessFlags access_flags, vk::PipelineStageFlags input_stage,
+            vk::PipelineStageFlags output_stage) const;
 
     // Called by image accessors to register an use of an image in a task
-    void add_image_access(
-            std::shared_ptr<detail::image_impl> image, access_mode mode, image_usage usage);
+    void add_image_access(std::shared_ptr<detail::image_impl> image, vk::AccessFlags access_flags,
+            vk::PipelineStageFlags input_stage, vk::PipelineStageFlags output_stage,
+            vk::ImageLayout layout) const;
 
     // TODO add_direct_image_access for raw VkImages
     // TODO add_direct_buffer_access for raw VkBuffer
-    void add_resource_access(std::shared_ptr<detail::virtual_resource> resource, access_mode mode);
 
-    std::unique_ptr<detail::submit_task> task_;
-    struct resource_access {
-        detail::resource_ptr resource;
-        access_mode mode;
-        union {
-            buffer_usage buffer;
-            image_usage image;
-        } usage_flags;
-    };
-    std::vector<resource_access> accesses_;
+    detail::queue_impl& queue_;
+    detail::task& task_;
 };
 
 //-----------------------------------------------------------------------------
@@ -107,12 +103,17 @@ public:
     /// @brief
     /// @tparam F
     /// @param f
+    ///
+    /// @par Exception Safety
+    /// Basic guarantee: if the handler callback throws, the current state of the queue might be affected
+    /// (a task might be partially constructed), but no resource is leaked.
+    /// In reasonable programs, the callback probably should not throw exceptions.
     template<typename F>
     void schedule(std::string_view name, F f) {
         // create task
-        auto h = begin_build_task(name);
+        auto& task = create_task(name);
+        handler h{ *impl_, task };
         f(h);
-        end_build_task(std::move(h));
     }
 
     void enqueue_pending_tasks();
@@ -120,11 +121,7 @@ public:
     void present(swapchain_image&& image);
 
 private:
-    /// @brief Called to start building a task. Returns the task sequence number.
-    [[nodiscard]] handler begin_build_task(std::string_view name) const noexcept;
-
-    /// @brief Called to finish building a task. Adds the task to the current batch.
-    void end_build_task(handler&& handler);
+    [[nodiscard]] detail::task& create_task(std::string_view name) noexcept;
 
     std::shared_ptr<detail::queue_impl> impl_;
 };

@@ -8,21 +8,13 @@
 
 namespace graal::detail {
 
-class swapchain_image_impl : public resource {
-    friend class swapchain_impl;
+class swapchain_impl;
+class swapchain_image_impl;
 
-public:
-    swapchain_image_impl(vk::Image image, size_t index) :
-        resource{resource_type::swapchain_image}, image_{image} {
-    }
-
-private:
-    vk::Image image_;
-    size_t index_;
-    //std::shared_ptr<detail::swapchain_impl> swapchain_;
-};
-
+//-----------------------------------------------------------------------------
 class swapchain_impl {
+    friend class queue_impl;
+
 public:
     swapchain_impl(device& device, range_2d framebuffer_size, vk::SurfaceKHR surface);
 
@@ -30,12 +22,42 @@ public:
 
     void resize(range_2d framebuffer_size, vk::SurfaceKHR surface);
 
-    std::shared_ptr<swapchain_image_impl> acquire_next_image();
+    [[nodiscard]] vk::SwapchainKHR get_vk_swapchain() const noexcept {
+        return swapchain_;
+    }
+
+    [[nodiscard]] static std::shared_ptr<swapchain_image_impl> acquire_next_image(
+            std::shared_ptr<swapchain_impl> impl);
 
 private:
     device device_;
     vk::SwapchainKHR swapchain_;
-    std::vector<std::shared_ptr<swapchain_image_impl>> swapchain_images_;
+    std::vector<vk::Image> images_;
+};
+
+//-----------------------------------------------------------------------------
+class swapchain_image_impl : public resource {
+    friend class swapchain_impl;
+
+public:
+    swapchain_image_impl(
+            std::shared_ptr<detail::swapchain_impl> swapchain, vk::Image image, size_t index) :
+        resource{resource_type::swapchain_image},
+        swapchain_{std::move(swapchain)}, image_{image}, index_{index} {
+    }
+
+    [[nodiscard]] uint32_t index() const noexcept {
+        return index_;
+    }
+
+    [[nodiscard]] vk::SwapchainKHR get_vk_swapchain() const noexcept {
+        return swapchain_->get_vk_swapchain();
+    }
+
+private:
+    std::shared_ptr<detail::swapchain_impl> swapchain_;
+    vk::Image image_;
+    size_t index_;
 };
 
 }  // namespace graal::detail

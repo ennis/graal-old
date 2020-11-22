@@ -559,3 +559,71 @@ then must do `shared_ptr<image<>>`, which is a double pointer indirection (`shar
 So, no.
 
 ## Thread safety for external reference counting?
+
+## Automatic pipeline barriers / layout transitions
+Pipeline barriers are inserted _between_ tasks.
+
+Each task has :
+- a "consumer" pipeline stage mask that describes the stages that consume data from read dependencies.
+	- corresponds to the "destination" stage mask of CmdPipelineBarrier
+- a "producer" PSM that describes the stages that write data to write dependencies.
+	- corresponds to the "source" stage mask of CmdPipelineBarrier
+
+## Exception safety for resource usage flags
+Buffers and images have usage flags (VkImageUsageFlags/VkBufferUsageFlags), which need to be set on construction 
+and that determine how the resource will be used.
+There are three options to keep track of required usages:
+
+1. a "flags" member on the resource, updated whenever an accessor is constructed that references the resource
+	- not exception safe if a task fails
+2. a "flags" member on the resource, updated whenever a task referencing the resource is successfully submitted
+	- current solution
+3. no member, collect during batch submission just before allocating the resources
+	- cleanest
+
+## Consider making task handler callbacks noexcept
+Handler callbacks that can throw forces us to delay registration of temporaries and accesses until 
+the callback is finished (otherwise, may leave the DAG in an invalid state if an exception is thrown).
+
+A noexcept callback would mean that we can incrementally build task dependencies without worrying that 
+the task would suddenly become invalid because of an exception. This means that we can allocate the task in place
+instead of moving things around.
+
+## Pipeline barriers
+Access flags and barriers are irrelevant for tasks that are not command buffer submissions (they are synchronized with semaphores).
+For instance, a present operation is not a command, so there's no need to sync it with the pipeline and an access mode.
+The only common information that we should store it is:
+- whether we are reading or writing to the resource
+- for images, the layout in which the image should be
+The rest (pipeline barriers) should be specific to `submit_tasks`.
+
+Two options:
+- store only resource+layout in base `task`, pipeline barriers in `submit_task`
+- store resource+layout+pipeline barriers in `task`, ignore barriers for `present_task`.
+
+Third option:
+- remove present tasks from the DAG.
+Present operations will then be something that operates outside the DAG, forcing the resolution of the current batch.
+This may be preferable.
+
+Questions:
+1. do we want to "schedule" present operations within a DAG? 
+2. what other things can be scheduled on queues and do they correspond to a task?
+
+For 2., the operations we can do on a queue are:
+- submit a batch of command buffers
+- present
+- bind device memory to a sparse resource object
+- insert debug markers 
+- wait idle
+- do perf queries (vkQueueSetPerformanceConfigurationINTEL)
+
+Out of all of these, only sparse memory bindings is relevant to the DAG. 
+The question becomes:
+- what is sparse binding? what are the typical use cases?
+- do we want to schedule sparse binds within a batch?
+	- i.e. can sparse binds be done in the middle of a batch?
+	- probably not? (do it between batches) 
+
+
+

@@ -189,11 +189,8 @@ public:
         return has_size() && has_format();
     }
 
-    void add_usage_flags(vk::ImageUsageFlags flags) {
-        if (image_) {
-            // can't set usage once the resource is created
-            throw std::logic_error{"image already created"};
-        }
+    void add_usage_flags(vk::ImageUsageFlags flags) noexcept {
+        // behavior undefined if image already created
         usage_ = usage_ | flags;
     }
 
