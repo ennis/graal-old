@@ -19,12 +19,8 @@ struct physical_device_and_properties {
 struct device_and_queues {
     physical_device_and_properties phy;
     vk::Device device;
-    uint32_t graphics_queue_family;
-    vk::Queue graphics_queue;
-    uint32_t compute_queue_family;
-    vk::Queue compute_queue;
-    uint32_t transfer_queue_family;
-    vk::Queue transfer_queue;
+    size_t queue_class_map[max_queues];
+    vk::Queue queues[max_queues];
 };
 
 // TODO remove once MSVC supports std::popcount
@@ -104,35 +100,36 @@ physical_device_and_properties select_physical_device(vk::Instance instance) {
             .device = sel_phy, .properties = sel_phy_properties, .features = sel_phy_features};
 }
 
+}  // namespace
+
 /// @brief Creates the vulkan device and default queues
 /// @param instance
 /// @return
-device_and_queues create_vk_device_and_queues(
-        vk::Instance instance, vk::SurfaceKHR present_surface) {
-    auto phy = select_physical_device(instance);
+void device_impl::create_vk_device_and_queues(vk::SurfaceKHR present_surface) {
+    auto phy = select_physical_device(instance_);
 
     fmt::print("Selected physical device: {}\n", phy.properties.deviceName);
 
     // --- find the best queue families for graphics, compute, and transfer
     auto queue_family_props = phy.device.getQueueFamilyProperties();
 
-    uint32_t graphics_queue_family = find_queue_family(
+    graphics_queue_family_ = find_queue_family(
             phy.device, queue_family_props, vk::QueueFlagBits::eGraphics, present_surface);
-    uint32_t compute_queue_family =
+    compute_queue_family_ =
             find_queue_family(phy.device, queue_family_props, vk::QueueFlagBits::eCompute, nullptr);
-    uint32_t transfer_queue_family = find_queue_family(
+    transfer_queue_family_ = find_queue_family(
             phy.device, queue_family_props, vk::QueueFlagBits::eTransfer, nullptr);
 
-    fmt::print("Graphics queue family: {} ({})\n", graphics_queue_family,
-            to_string(queue_family_props[graphics_queue_family].queueFlags));
-    fmt::print("Compute queue family: {} ({})\n", compute_queue_family,
-            to_string(queue_family_props[compute_queue_family].queueFlags));
-    fmt::print("Transfer queue family: {} ({})\n", transfer_queue_family,
-            to_string(queue_family_props[transfer_queue_family].queueFlags));
+    fmt::print("Graphics queue family: {} ({})\n", graphics_queue_family_,
+            to_string(queue_family_props[graphics_queue_family_].queueFlags));
+    fmt::print("Compute queue family: {} ({})\n", compute_queue_family_,
+            to_string(queue_family_props[compute_queue_family_].queueFlags));
+    fmt::print("Transfer queue family: {} ({})\n", transfer_queue_family_,
+            to_string(queue_family_props[transfer_queue_family_].queueFlags));
 
     std::vector<vk::DeviceQueueCreateInfo> device_queue_create_infos;
     const float queue_priority = 1.0f;
-    for (auto family : {graphics_queue_family, compute_queue_family, transfer_queue_family}) {
+    for (auto family : {graphics_queue_family_, compute_queue_family_, transfer_queue_family_}) {
         // only create multiple queues if the families are different; otherwise use
         // the same queue
         bool already_created = false;
@@ -170,38 +167,35 @@ device_and_queues create_vk_device_and_queues(
             .pEnabledFeatures = nullptr,
     };
 
-    auto device = phy.device.createDevice(dci);
+    // create device
+    device_ = phy.device.createDevice(dci);
 
-    auto graphics_queue = device.getQueue(graphics_queue_family, 0);
-    auto compute_queue = device.getQueue(compute_queue_family, 0);
-    auto transfer_queue = device.getQueue(transfer_queue_family, 0);
+    const auto graphics_queue = device_.getQueue(graphics_queue_family_, 0);
+    const auto compute_queue = device_.getQueue(compute_queue_family_, 0);
+    const auto transfer_queue = device_.getQueue(transfer_queue_family_, 0);
 
-    return device_and_queues{.phy = phy,
-            .device = device,
-            .graphics_queue_family = graphics_queue_family,
-            .graphics_queue = graphics_queue,
-            .compute_queue_family = compute_queue_family,
-            .compute_queue = compute_queue,
-            .transfer_queue_family = transfer_queue_family,
-            .transfer_queue = transfer_queue};
+    const size_t graphics_queue_index = 0;
+    const size_t compute_queue_index = compute_queue == graphics_queue ? 0 : 1;
+    const size_t transfer_queue_index =
+            transfer_queue == graphics_queue ? 0 : (transfer_queue == compute_queue ? 1 : 2);
+    const size_t present_queue_index = 0;
+
+    // initialize
+    physical_device_ = phy.device;
+    physical_device_properties_ = phy.properties;
+    physical_device_features_ = phy.features;
+    queues_[graphics_queue_index] = graphics_queue;
+    queues_[compute_queue_index] = compute_queue;
+    queues_[transfer_queue_index] = transfer_queue;
+    queue_indices_.graphics = graphics_queue_index;
+    queue_indices_.compute = compute_queue_index;
+    queue_indices_.transfer = transfer_queue_index;
+    queue_indices_.present = present_queue_index;
 }
-
-}  // namespace
 
 device_impl::device_impl(vk::SurfaceKHR present_surface) {
     instance_ = get_vulkan_instance();
-    auto device_and_queues = create_vk_device_and_queues(instance_, present_surface);
-
-    physical_device_ = device_and_queues.phy.device;
-    physical_device_properties_ = device_and_queues.phy.properties;
-    physical_device_features_ = device_and_queues.phy.features;
-    device_ = device_and_queues.device;
-    graphics_queue_family_ = device_and_queues.graphics_queue_family;
-    graphics_queue_ = device_and_queues.graphics_queue;
-    compute_queue_family_ = device_and_queues.compute_queue_family;
-    compute_queue_ = device_and_queues.compute_queue;
-    transfer_queue_family_ = device_and_queues.transfer_queue_family;
-    transfer_queue_ = device_and_queues.transfer_queue;
+    create_vk_device_and_queues(present_surface);
 
     // create a memory allocator instance
     VmaAllocatorCreateInfo allocator_create_info{

@@ -25,7 +25,7 @@ struct image_properties {
     std::optional<unsigned int> mip_levels = std::nullopt;
     std::optional<unsigned int> array_layers = std::nullopt;
     std::optional<unsigned int> num_samples = std::nullopt;
-    bool aliasable = false;
+    bool aliasable = true;  // aliasable by default
 };
 
 struct virtual_tag_t {
@@ -88,17 +88,19 @@ inline constexpr vk::SampleCountFlagBits get_vk_sample_count(unsigned samples) {
 class image_impl : public virtual_resource {
 public:
     image_impl(image_type type, allocation_flags flags) :
-        virtual_resource{resource_type::image}, type_{type} {
+        virtual_resource{resource_type::image}, type_{type}, allocation_flags_{flags} {
     }
     image_impl(image_type type, image_format format, allocation_flags flags) :
-        virtual_resource{resource_type::image}, type_{type}, format_{format} {
+        virtual_resource{resource_type::image}, type_{type}, format_{format}, allocation_flags_{
+                                                                                      flags} {
     }
     image_impl(image_type type, range<3> size, allocation_flags flags) :
-        virtual_resource{resource_type::image}, type_{type}, size_{size} {
+        virtual_resource{resource_type::image}, type_{type}, size_{size}, allocation_flags_{flags} {
     }
 
     image_impl(image_type type, image_format format, range<3> size, allocation_flags flags) :
-        virtual_resource{ resource_type::image }, type_{type}, format_{format}, size_{size} {
+        virtual_resource{resource_type::image}, type_{type}, format_{format}, size_{size},
+        allocation_flags_{flags} {
     }
 
     //-------------------------------------------------------
@@ -231,15 +233,12 @@ protected:
 // where the filter (the callee) decides the size of the image,
 // but the *caller* decides other properties of the image, such as its required
 // access (evaluation only, or externally visible)
- 
 
 /// @brief Represents an image.
 /// @tparam Type
 /// @tparam ExternalAccess
 template<image_type Type, bool HostVisible = false>
-class image final 
-{
-
+class image final {
     template<image_type Type, image_usage Usage, access_mode AccessMode, bool HostVisible>
     friend class image_accessor_base;
     friend class handler;
@@ -251,61 +250,51 @@ public:
     static constexpr int Extents = num_extents(Type);
 
     image(const image_properties& props = {}) :
-        impl_{std::make_shared<impl_t>(Type, detail::get_allocation_flags(HostVisible, props))} 
-    {
+        impl_{std::make_shared<impl_t>(Type, detail::get_allocation_flags(HostVisible, props))} {
         apply_image_properties(props);
     }
 
     image(image_format format, const image_properties& props = {}) :
         impl_{std::make_shared<impl_t>(
-                Type, format, detail::get_allocation_flags(HostVisible, props))} 
-    {
+                Type, format, detail::get_allocation_flags(HostVisible, props))} {
         apply_image_properties(props);
     }
 
     image(image_size_t size, const image_properties& props = {}) :
         impl_{std::make_shared<impl_t>(
-                Type, size, detail::get_allocation_flags(HostVisible, props))}
-    {
+                Type, size, detail::get_allocation_flags(HostVisible, props))} {
         apply_image_properties(props);
     }
 
     image(image_format format, image_size_t size, const image_properties& props = {}) :
         impl_{std::make_shared<impl_t>(Type, format, detail::extend_size(size),
-                detail::get_allocation_flags(HostVisible, props))}
-    {
+                detail::get_allocation_flags(HostVisible, props))} {
         apply_image_properties(props);
     }
 
     image(virtual_tag_t, const image_properties& props = {}) :
-        impl_{std::make_shared<impl_t>(Type, detail::get_allocation_flags(HostVisible, props))}
-    {
+        impl_{std::make_shared<impl_t>(Type, detail::get_allocation_flags(HostVisible, props))} {
         apply_image_properties(props);
     }
 
     image(virtual_tag_t, image_format format, const image_properties& props = {}) :
         impl_{std::make_shared<impl_t>(
-                Type, format, detail::get_allocation_flags(HostVisible, props))} 
-    {
+                Type, format, detail::get_allocation_flags(HostVisible, props))} {
         apply_image_properties(props);
     }
 
     image(virtual_tag_t, image_size_t size, const image_properties& props = {}) :
         impl_{std::make_shared<impl_t>(Type, detail::extend_size(size),
-                detail::get_allocation_flags(HostVisible, props))}
-    {
+                detail::get_allocation_flags(HostVisible, props))} {
         apply_image_properties(props);
     }
 
     image(virtual_tag_t, image_format format, image_size_t size,
             const image_properties& props = {}) :
         impl_{std::make_shared<impl_t>(Type, format, detail::extend_size(size),
-                detail::get_allocation_flags(HostVisible, props))} 
-    {
+                detail::get_allocation_flags(HostVisible, props))} {
         apply_image_properties(props);
     }
-
-
 
     /// @brief
     /// @param size

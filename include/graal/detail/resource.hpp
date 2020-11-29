@@ -58,7 +58,11 @@ public:
 
     bool allocated = false;  // set to true once bind_memory has been called successfully
 
-    serial_number last_write_serial = 0;
+    submission_number last_access; // last access serial (read or write)
+    submission_number last_write;  // last write serial
+    vk::ImageLayout last_layout = vk::ImageLayout::eUndefined;            // last known image layout, ignored for buffers
+    vk::AccessFlags last_access_flags = {};
+    vk::PipelineStageFlags last_stage_uses;      
     vk::Semaphore wait_semaphore =
             nullptr;  // semaphore to synchronize on before using the resource (updated as the resource is used in a queue)
     // TODO use a unique_handle pattern to signal ownership. Not the one provided by vulkan-hpp though because

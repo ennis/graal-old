@@ -625,5 +625,130 @@ The question becomes:
 	- i.e. can sparse binds be done in the middle of a batch?
 	- probably not? (do it between batches) 
 
+Problem with that: they might not need to be scheduled, but they still need to be assigned a serial number.
+So, if there are no tasks assigned to bind sparse operations, 
+then suddenly the serial numbers do not map one-to-one with tasks anymore.
+
+For 1., not scheduling present operations means that 
+
+## Problem with separating present operations from the graph
+When presenting, we must submit a command buffer to transition the image layout to PRESENT_SRC if it's not
+already in this layout.
+This causes a lot of complexity because this operation needs a command buffer and semaphore that we need to manage 
+outside the batch mechanism.
+- 
+Ideally we'd like to put the transition in the previous batch, but it's not possible if 
+it has already been submitted.
 
 
+## Problem with Renderpasses
+It is recommended to use renderpass external dependencies instead of pipeline barriers where possible. However, 
+we don't know which external dependencies are required before the graph is submitted, which means that
+renderpasses, and thus all pipelines, cannot be created before submission, which is *annoying*.
+
+Solution: embrace caching. Use [Fossilize](https://github.com/ValveSoftware/Fossilize). 
+
+Q: where to create renderpasses?
+A: if merging renderpasses, then it should be the queue
+
+Q: should we automatically try to merge renderpasses in the queue?
+
+## Renderpass API
+
+Given:
+```cpp
+image A;
+image B;
+image C;
+```
+
+### Option A: accessors
+```cpp
+q.render_pass([&](handler& h) {
+	color_attachment a {A, h, clear{ ... }};
+	color_attachment b {B, h, load};
+	depth_attachment c {C, h};
+
+	// ... other resources: uniforms, storage, etc ...
+
+	h.commands([&](const command_context& ctx) {
+		// render pass and framebuffer already bound here
+	});
+});
+```
+Issues: attachment index depends on the order of declaration.
+
+### Option B: framebuffer accessor
+```cpp
+q.render_pass([&](handler& h) {
+	framebuffer fbo {h, 
+		/* color attachments */ {
+			color_attachment{A, clear{}},
+			color_attachment{B, load{}}, 
+		},
+		/* depth attachment */ depth_attachment{C}
+	}; 
+
+	// ... other resources: uniforms, storage, etc ...
+
+	h.commands([&](const command_context& ctx) {
+		// render pass and framebuffer already bound here
+	});
+});
+``` 
+The order is clear. FBO is accessible within a command context via the accessor.
+Issue: 
+* creating multiple framebuffers is invalid.
+* attachments not bound to a variable, must reference by index 
+
+### Option C: arguments
+```cpp
+q.render_pass( 
+	/* color attachments */ { 
+		color_attachment{A, clear{}},
+		color_attachment{B, load{}}, 
+	},
+	/* depth attachment */ 
+	depth_attachment {C},
+	[&](handler& h) {
+
+		// ... other resources: uniforms, storage, etc ...
+
+		h.commands([&](const command_context& ctx) {
+			// render pass and framebuffer already bound here
+		});
+	} 
+);
+```
+Advantages: unambiguous
+Issues: 
+* harder to parse visually? (use a render_pass_desc struct if necessary)
+* attachments not bound to a variable, must reference by index 
+
+Option C seems best. Referencing by index is not that big of a deal (only used in vkCmdClearAttachments?)
+
+Syntax proposal:
+```cpp
+render_pass_desc rpd {
+	.color_attachments = { color_attachment{A, clear{...} } },
+	.depth_attachment = depth_attachment{ },
+	.input_attachments = { ... }
+};
+
+q.render_pass(rpd, [&](handler& h) {
+
+});
+
+
+color_attachment{A, attachment_load_op::clear, attachment_store_op::store };
+depth_attachment{B, attachment_load_op::, attachment_store_op::dont_care };
+
+```
+
+
+## Log
+28/11 : pipeline state tracking and "queue classes". Can deduce execution and memory dependencies.
+29/11 : refactored scheduling
+	- split scheduling, barrier deduction into several functions, under a common context (schedule_ctx)
+	- interleave liveness analysis with scheduling so that it is correct w.r.t. pipeline usage
+	- submission numbers (SNN)

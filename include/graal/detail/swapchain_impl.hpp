@@ -50,6 +50,10 @@ public:
         return index_;
     }
 
+    [[nodiscard]] vk::Image get_vk_image() const noexcept {
+        return image_;
+    }
+
     [[nodiscard]] vk::SwapchainKHR get_vk_swapchain() const noexcept {
         return swapchain_->get_vk_swapchain();
     }

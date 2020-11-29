@@ -48,6 +48,8 @@ public:
         task_->callbacks.push_back(std::move(command_callback));
     }
 
+
+
     // Called by buffer accessors to register an use of a buffer in a task
     template<typename T, bool HostVisible>
     void add_buffer_access(buffer<T, HostVisible>& buffer, vk::AccessFlags access_flags,
@@ -62,10 +64,34 @@ public:
             vk::ImageLayout layout) const {
         add_image_access(image.impl_, access_flags, input_stage, output_stage, layout);
     }
+    
+    void add_image_access(swapchain_image image, vk::AccessFlags access_flags,
+        vk::PipelineStageFlags input_stage, vk::PipelineStageFlags output_stage,
+        vk::ImageLayout layout) const {
+        add_image_access(image.impl_, access_flags, input_stage, output_stage, layout);
+    }
 
 private:
     handler(detail::queue_impl& queue, detail::task& task) : queue_{queue}, task_{task} {
     }
+
+    // Called by image accessors to register a color attachment.
+    void add_color_attachment(
+        std::shared_ptr<detail::image_impl> image,
+        vk::AttachmentLoadOp load_op,
+        vk::AttachmentStoreOp store_op);
+
+    void add_depth_stencil_attachment(
+        std::shared_ptr<detail::image_impl> image,
+        vk::AttachmentLoadOp load_op,
+        vk::AttachmentStoreOp store_op, 
+        vk::AttachmentLoadOp stencil_load_op,
+        vk::AttachmentStoreOp stencil_store_op);
+
+    void add_input_attachment(
+        std::shared_ptr<detail::image_impl> image,
+        vk::AttachmentLoadOp load_op,
+        vk::AttachmentStoreOp store_op);
 
     // Called by buffer accessors to register an use of a buffer in a task
     void add_buffer_access(std::shared_ptr<detail::buffer_impl> buffer,
@@ -76,6 +102,10 @@ private:
     void add_image_access(std::shared_ptr<detail::image_impl> image, vk::AccessFlags access_flags,
             vk::PipelineStageFlags input_stage, vk::PipelineStageFlags output_stage,
             vk::ImageLayout layout) const;
+    
+    void add_image_access(std::shared_ptr<detail::swapchain_image_impl> swapchain_image,
+        vk::AccessFlags access_flags, vk::PipelineStageFlags input_stage,
+        vk::PipelineStageFlags output_stage, vk::ImageLayout layout) const;
 
     // TODO add_direct_image_access for raw VkImages
     // TODO add_direct_buffer_access for raw VkBuffer

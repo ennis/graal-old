@@ -9,6 +9,7 @@
 #include <chrono>
 #include <fstream>
 #include <numeric>
+#include <queue>
 #include <span>
 
 namespace graal {
@@ -69,7 +70,11 @@ bool adjust_allocation_requirements(
 
 /// @brief A reference to a resource used in the batch (called "temporary" for historical reasons)
 struct temporary {
+    /// @brief The resource
     resource_ptr resource;
+    /// @brief The last write SN, used to build the DAG.
+    /// NOTE: this SN is only valid for DAG building and might not be the final write SN assigned to the resource (reordering is possible).
+    // XXX we could store it in the resource, but let's keep it there for now.
     serial_number last_write;
 };
 
@@ -163,8 +168,28 @@ void dump_tasks(std::ostream& out, std::span<const task> tasks,
 
 struct allocate_batch_memory_results {};
 
+// Computes the transitive closure of the task graph, which tells us
+// whether there's a path between two tasks in the graph.
+// This is used later during liveness analysis for querying whether two
+// tasks can be run in parallel (if there exists no path between two tasks,
+// then they can be run in parallel).
+std::vector<variable_set> transitive_closure(std::span<const task> tasks) {
+    std::vector<variable_set> m;
+    m.resize(tasks.size());
+    for (size_t i = 0; i < tasks.size(); ++i) {
+        // tasks already in topological order
+        m[i].resize(tasks.size());
+        for (auto pred : tasks[i].preds) {
+            m[i].set(pred);
+            m[i] |= m[pred];
+        }
+    }
+    return m;
+}
+
 allocate_batch_memory_results allocate_batch_memory(device_impl_ptr device, serial_number start_sn,
-        std::span<task> tasks, std::span<temporary> temporaries) {
+        std::span<task> tasks, std::span<temporary> temporaries,
+        std::span<const variable_set> reachability) {
     // --- start perf timer for submission
     namespace chrono = std::chrono;
     const auto start = chrono::high_resolution_clock::now();
@@ -187,22 +212,6 @@ allocate_batch_memory_results allocate_batch_memory(device_impl_ptr device, seri
     // serial execution and may reduce performance. Since we keep track of data
     // dependencies between tasks during construction of the task list, we can
     // determine which tasks can be run in parallel.
-
-    // --- 1. Compute the transitive closure of the task graph, which tells us
-    // whether there's a path between two tasks in the graph.
-    // This is used later during liveness analysis for querying whether two
-    // tasks can be run in parallel (if there exists no path between two tasks,
-    // then they can be run in parallel).
-    std::vector<variable_set> reachability;
-    reachability.resize(n_task);
-    for (size_t i = 0; i < n_task; ++i) {
-        // tasks already in topological order
-        reachability[i].resize(n_task);
-        for (auto pred : tasks[i].preds) {
-            reachability[i].set(pred);
-            reachability[i] |= reachability[pred];
-        }
-    }
 
     // --- 2. allocate resources for temporaries, keeping track of live and dead
     // temporaries on the fly
@@ -351,7 +360,7 @@ allocate_batch_memory_results allocate_batch_memory(device_impl_ptr device, seri
                     if (!aliased) {
                         // new allocation
                         allocations.push_back(alloc_requirements);
-                        alloc_map.push_back(allocations.size() - 1);
+                        alloc_map[t0] = allocations.size() - 1;
                     }
                 }
             }
@@ -389,15 +398,35 @@ allocate_batch_memory_results allocate_batch_memory(device_impl_ptr device, seri
 
 #ifdef GRAAL_TRACE_BATCH_SUBMIT
     fmt::print("pre-submission took {}us\n", us.count());
+    fmt::print("Memory blocks:\n");
+    for (size_t i = 0; i < allocations.size(); ++i) {
+        const auto& alloc = allocations[i];
+        fmt::print("   MEM_{}: size={} \n"
+                   "           align={}\n"
+                   "           flags={}\n"
+                   "           memory_type_bits={}\n",
+                i, alloc.size, alloc.alignment, alloc.flags.underlying_value(),
+                alloc.memory_type_bits);
+    }
+
+    fmt::print("\nMemory block assignments:\n");
+    for (size_t i = 0; i < n_tmp; ++i) {
+        if (alloc_map[i] != (size_t) -1) {
+            fmt::print("   {:02d} => MEM_{}\n", i, alloc_map[i]);
+        } else {
+            fmt::print("   {:02d} => no memory\n", i);
+        }
+    }
+
     /*for (size_t t = 0; t < num_tasks; ++t) {
-          fmt::print("live set for task #{}:", t);
-          for (size_t i = 0; i < num_temporaries; ++i) {
-            if (live_sets[t].test(i)) {
-              fmt::print("{},", temporaries_[i]->name());
-            }
-          }
-          fmt::print("\n");
-        }*/
+                      fmt::print("live set for task #{}:", t);
+                      for (size_t i = 0; i < num_temporaries; ++i) {
+                        if (live_sets[t].test(i)) {
+                          fmt::print("{},", temporaries_[i]->name());
+                        }
+                      }
+                      fmt::print("\n");
+                    }*/
 
     // dump task graph with live-variable analysis to a graphviz file
     {
@@ -407,6 +436,214 @@ allocate_batch_memory_results allocate_batch_memory(device_impl_ptr device, seri
 #endif
     return {};
 }
+
+inline constexpr bool is_render_pass_attachment_access(vk::AccessFlags flags) {
+    return !(
+            flags
+            & ~(vk::AccessFlagBits::eColorAttachmentRead | vk::AccessFlagBits::eColorAttachmentWrite
+                    | vk::AccessFlagBits::eInputAttachmentRead));
+}
+
+inline constexpr bool merge_render_passes(const task& a, const task& b) {
+    // TODO
+    return false;
+}
+
+struct pipeline_state {
+    enum stage_index : size_t {
+        i_DI,
+        i_VI,
+        i_VS,
+        i_TCS,
+        i_TES,
+        i_GS,
+        i_TF,
+        i_TS,
+        i_MS,
+        i_FSR,
+        i_EFT,
+        i_FS,
+        i_LFT,
+        i_CAO,
+        i_FDP,
+        i_CS,
+        i_RTS,
+        i_HST,
+        i_CPR,
+        i_ASB,
+        i_TR,
+        i_CR,
+        max
+    };
+
+    static constexpr auto DI = VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT;
+    static constexpr auto VI = VK_PIPELINE_STAGE_VERTEX_INPUT_BIT;
+    static constexpr auto VS = VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
+    static constexpr auto TCS = VK_PIPELINE_STAGE_TESSELLATION_CONTROL_SHADER_BIT;
+    static constexpr auto TES = VK_PIPELINE_STAGE_TESSELLATION_EVALUATION_SHADER_BIT;
+    static constexpr auto GS = VK_PIPELINE_STAGE_GEOMETRY_SHADER_BIT;
+    static constexpr auto TF = VK_PIPELINE_STAGE_TRANSFORM_FEEDBACK_BIT_EXT;
+    static constexpr auto TS = VK_PIPELINE_STAGE_TASK_SHADER_BIT_NV;
+    static constexpr auto MS = VK_PIPELINE_STAGE_MESH_SHADER_BIT_NV;
+    static constexpr auto FSR = VK_PIPELINE_STAGE_SHADING_RATE_IMAGE_BIT_NV;
+    static constexpr auto EFT = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    static constexpr auto FS = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    static constexpr auto LFT = VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    static constexpr auto CAO = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    static constexpr auto CS = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+    static constexpr auto FDP = VK_PIPELINE_STAGE_FRAGMENT_DENSITY_PROCESS_BIT_EXT;
+    static constexpr auto RTS = VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR;
+    static constexpr auto ASB = VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
+    static constexpr auto TR = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    static constexpr auto CR = VK_PIPELINE_STAGE_CONDITIONAL_RENDERING_BIT_EXT;
+    static constexpr auto HST = VK_PIPELINE_STAGE_HOST_BIT;
+    static constexpr auto CPR = VK_PIPELINE_STAGE_COMMAND_PREPROCESS_BIT_NV;
+    static constexpr auto ALL_COMMANDS = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+    static constexpr auto ALL_GRAPHICS = VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT;
+    static constexpr auto BOTTOM_OF_PIPE = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+
+    serial_number stages[stage_index::max] = {0};
+
+    /// @brief Returns whether an barrier is needed for the specified execution dependency (sn+pipeline stages)
+    /// @param sn
+    /// @param source_flags
+    /// @return
+    bool needs_execution_barrier(
+            serial_number sn, vk::PipelineStageFlags source_flags) const noexcept {
+        const VkPipelineStageFlags src = (VkPipelineStageFlags) source_flags;
+        bool needs_barrier = false;
+        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | DI))
+            needs_barrier |= stages[i_DI] < sn;
+        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | VI))
+            needs_barrier |= stages[i_VI] < sn;
+        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | VS))
+            needs_barrier |= stages[i_VS] < sn;
+        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | TCS))
+            needs_barrier |= stages[i_TCS] < sn;
+        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | TES))
+            needs_barrier |= stages[i_TES] < sn;
+        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | GS))
+            needs_barrier |= stages[i_GS] < sn;
+        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | TF))
+            needs_barrier |= stages[i_TF] < sn;
+        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | TS))
+            needs_barrier |= stages[i_TS] < sn;
+        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | MS))
+            needs_barrier |= stages[i_MS] < sn;
+        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | FSR))
+            needs_barrier |= stages[i_FSR] < sn;
+        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | EFT))
+            needs_barrier |= stages[i_EFT] < sn;
+        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | FS))
+            needs_barrier |= stages[i_FS] < sn;
+        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | LFT))
+            needs_barrier |= stages[i_LFT] < sn;
+        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | CAO))
+            needs_barrier |= stages[i_CAO] < sn;
+        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | FDP))
+            needs_barrier |= stages[i_FDP] < sn;
+        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | RTS)) needs_barrier |= stages[i_RTS] < sn;
+        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | CS)) needs_barrier |= stages[i_CS] < sn;
+        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ASB)) needs_barrier |= stages[i_ASB] < sn;
+        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | TR)) needs_barrier |= stages[i_TR] < sn;
+        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | CR)) needs_barrier |= stages[i_CR] < sn;
+        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | HST)) needs_barrier |= stages[i_HST] < sn;
+        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | CPR)) needs_barrier |= stages[i_CPR] < sn;
+        return needs_barrier;
+    }
+
+    void apply_execution_barrier(serial_number sn, vk::PipelineStageFlags source_flags) {
+        const VkPipelineStageFlags src = (VkPipelineStageFlags) source_flags;
+        /* DI  */ if (src
+                      & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | DI | VI | VS | TCS | TES
+                              | GS | TF | TS | MS | FSR | EFT | FS | LFT | CAO | CS | RTS)) {
+            if (stages[i_DI] < sn) { stages[i_DI] = sn; }
+        }
+        /* VI  */ if (src
+                      & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | VI | VS | TCS | TES | GS
+                              | TF | FSR | EFT | FS | LFT | CAO)) {
+            if (stages[i_VI] < sn) { stages[i_VI] = sn; }
+        }
+        /* VS  */ if (src
+                      & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | VS | TCS | TES | GS | TF
+                              | FSR | EFT | FS | LFT | CAO)) {
+            if (stages[i_VS] < sn) { stages[i_VS] = sn; }
+        }
+        /* TCS */ if (src
+                      & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | TCS | TES | GS | TF | FSR
+                              | EFT | FS | LFT | CAO)) {
+            if (stages[i_TCS] < sn) { stages[i_TCS] = sn; }
+        }
+        /* TES */ if (src
+                      & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | TES | GS | TF | FSR | EFT
+                              | FS | LFT | CAO)) {
+            if (stages[i_TES] < sn) { stages[i_TES] = sn; }
+        }
+        /* GS  */ if (src
+                      & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | GS | TF | FSR | EFT | FS
+                              | LFT | CAO)) {
+            if (stages[i_GS] < sn) { stages[i_GS] = sn; }
+        }
+        /* TF  */ if (src
+                      & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | TF | FSR | EFT | FS | LFT
+                              | CAO)) {
+            if (stages[i_TF] < sn) { stages[i_TF] = sn; }
+        }
+        /* TS  */ if (src
+                      & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | TS | MS | FSR | EFT | FS
+                              | LFT | CAO)) {
+            if (stages[i_TS] < sn) { stages[i_TS] = sn; }
+        }
+        /* MS  */ if (src
+                      & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | MS | FSR | EFT | FS | LFT
+                              | CAO)) {
+            if (stages[i_MS] < sn) { stages[i_MS] = sn; }
+        }
+        /* FSR */ if (src
+                      & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | FSR | EFT | FS | LFT
+                              | CAO)) {
+            if (stages[i_FSR] < sn) { stages[i_FSR] = sn; }
+        }
+        /* EFT */ if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | EFT | FS | LFT | CAO)) {
+            if (stages[i_EFT] < sn) { stages[i_EFT] = sn; }
+        }
+        /* FS  */ if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | FS | LFT | CAO)) {
+            if (stages[i_FS] < sn) { stages[i_FS] = sn; }
+        }
+        /* LFT */ if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | LFT | CAO)) {
+            if (stages[i_LFT] < sn) { stages[i_LFT] = sn; }
+        }
+        /* CAO */ if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | CAO)) {
+            if (stages[i_CAO] < sn) { stages[i_CAO] = sn; }
+        }
+        /* FDP */ if (src
+                      & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | FDP | EFT | FS | LFT
+                              | CAO)) {
+            if (stages[i_FDP] < sn) { stages[i_FDP] = sn; }
+        }
+        /* CS  */ if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | CS)) {
+            if (stages[i_CS] < sn) { stages[i_CS] = sn; }
+        }
+        /* RTS */ if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | RTS)) {
+            if (stages[i_RTS] < sn) { stages[i_RTS] = sn; }
+        }
+        /* HST */ if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | HST)) {
+            if (stages[i_HST] < sn) { stages[i_HST] = sn; }
+        }
+        /* CPR */ if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | CPR)) {
+            if (stages[i_CPR] < sn) { stages[i_CPR] = sn; }
+        }
+        /* ASB */ if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ASB)) {
+            if (stages[i_ASB] < sn) { stages[i_ASB] = sn; }
+        }
+        /* TR  */ if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | TR)) {
+            if (stages[i_TR] < sn) { stages[i_TR] = sn; }
+        }
+        /* CR  */ if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | CR)) {
+            if (stages[i_CR] < sn) { stages[i_CR] = sn; }
+        }
+    }
+};
 
 }  // namespace
 
@@ -438,6 +675,57 @@ struct batch {
     }
 };
 
+static void dump_batch(batch& b) {
+    fmt::print("=== batch (SN{} .. SN{}) ===\n", b.start_serial, b.finish_serial());
+
+    fmt::print("Temporaries:\n");
+    size_t tmp_index = 0;
+    for (const auto& tmp : b.temporaries) {
+        fmt::print(" - #{}: {} discarded={} last_write={}\n", tmp_index++,
+                tmp.resource->name().empty() ? "<unnamed>" : tmp.resource->name(),
+                tmp.resource->has_user_refs(), tmp.last_write);
+    }
+
+    fmt::print("Tasks:\n");
+    size_t task_index = 0;
+    for (auto&& t : b.tasks) {
+        fmt::print(" - task #{} {}\n", task_index, t.name.empty() ? "<unnamed>" : t.name);
+
+        if (!t.preds.empty()) {
+            fmt::print("   preds: ");
+            for (auto pred : t.preds) {
+                fmt::print("{},", pred);
+            }
+            fmt::print("\n");
+        }
+        if (!t.succs.empty()) {
+            fmt::print("   succs: ");
+            for (auto s : t.succs) {
+                fmt::print("{},", s);
+            }
+            fmt::print("\n");
+        }
+
+        if (!t.accesses.empty()) {
+            fmt::print("   accesses: \n");
+            for (const auto& access : t.accesses) {
+                fmt::print("      #{} flags={}\n", access.index,
+                        to_string(access.details.access_flags));
+                fmt::print("      input_stage={}\n"
+                           "      output_stage={}\n",
+                        to_string(access.details.input_stage),
+                        to_string(access.details.output_stage));
+                const auto ty = b.temporaries[access.index].resource->type();
+                if (ty == resource_type::image || ty == resource_type::swapchain_image) {
+                    fmt::print("          layout={}\n", to_string(access.details.layout));
+                }
+            }
+            fmt::print("\n");
+        }
+        task_index++;
+    }
+}
+
 //-----------------------------------------------------------------------------
 class queue_impl {
 public:
@@ -464,7 +752,7 @@ public:
         auto& task = batch_.tasks.back();
         last_serial_++;
         task.name = name;
-        task.serial = last_serial_;
+        task.snn.serial = last_serial_; // temporary SNN for DAG creation
         return task;
     }
 
@@ -474,6 +762,8 @@ public:
             task& t, resource_ptr resource, const resource_access_details& access);
 
 private:
+    void submit_tasks(std::span<const variable_set> reachability);
+
     size_t get_resource_tmp_index(resource_ptr resource);
     [[nodiscard]] command_buffer_pool get_command_buffer_pool();
 
@@ -485,6 +775,7 @@ private:
     using resource_to_temporary_map = std::unordered_map<resource*, size_t>;
 
     queue_properties props_;
+    queue_indices queue_indices_;
     device_impl_ptr device_;
     batch batch_;
     serial_number last_serial_ = 0;
@@ -496,7 +787,7 @@ private:
 };
 
 queue_impl::queue_impl(device_impl_ptr device, const queue_properties& props) :
-    device_{device}, props_{props} {
+    device_{device}, props_{props}, queue_indices_{device->get_queue_indices()} {
     auto vk_device = device_->get_vk_device();
 
     vk::SemaphoreTypeCreateInfo timeline_create_info{
@@ -519,7 +810,7 @@ size_t queue_impl::get_resource_tmp_index(resource_ptr resource) {
     const auto result = tmp_indices.insert({resource.get(), next_tmp_index});
     if (result.second) {
         // just inserted, create temporary
-        const auto last_write = resource->last_write_serial;
+        const auto last_write = resource->last_write.serial;
         // init temporary with reference to resource and last write serial that was set on submission of the previous batch
         batch_.temporaries.push_back(
                 temporary{.resource = std::move(resource), .last_write = last_write});
@@ -544,21 +835,21 @@ command_buffer_pool queue_impl::get_command_buffer_pool() {
 
 bool queue_impl::writes_are_user_observable(resource& r) const noexcept {
     // writes to the resources might be seen if there are still user handles to the resource
-    return r.last_write_serial > batch_.start_serial && !r.has_user_refs();
+    return r.last_write.serial > batch_.start_serial && !r.has_user_refs();
 }
 
 /*void queue_impl::finalize_batch() {
-    // fill successors array for each task
-    for (size_t i = 0; i < batch_.tasks.size(); ++i) {
-        auto& t = batch_.tasks[i];
-        for (auto pred : t->preds) {
-            auto& pred_succ = batch_.tasks[pred]->succs;
-            if (std::find(pred_succ.begin(), pred_succ.end(), i) == pred_succ.end()) {
-                pred_succ.push_back(i);
+            // fill successors array for each task
+            for (size_t i = 0; i < batch_.tasks.size(); ++i) {
+                auto& t = batch_.tasks[i];
+                for (auto pred : t->preds) {
+                    auto& pred_succ = batch_.tasks[pred]->succs;
+                    if (std::find(pred_succ.begin(), pred_succ.end(), i) == pred_succ.end()) {
+                        pred_succ.push_back(i);
+                    }
+                }
             }
-        }
-    }
-}*/
+        }*/
 
 const task* queue_impl::get_submitted_task(uint64_t sequence_number) const noexcept {
     uint64_t start;
@@ -586,72 +877,447 @@ const task* queue_impl::get_unsubmitted_task(uint64_t sequence_number) const noe
     return nullptr;
 }
 
+/// @brief Handles a memory dependency on a resource.
+/// @param resource the resource
+/// @param access how the resource is accessed in the task
+/// @param sn task serial number
+/// @param pstate known pipeline state
+/// @param src_stage_flags source pipeline barrier stages
+/// @param dst_stage_flags destination pipeline barrier stages
+///
+/// This function updates the required src_stage_flags and dst_stage_flags of pipeline barrier.
+/// It also updates the pipeline state with
+static void memory_dependency(resource& resource, const resource_access_details& access,
+        submission_number snn, const pipeline_state& pstate, vk::PipelineStageFlags& src_stage_flags,
+        vk::PipelineStageFlags& dst_stage_flags) 
+{
+    const bool writing = is_write_access(access.access_flags);
+    const bool reading = is_read_access(access.access_flags);
+
+    //assert(resource.last_write_serial < sn);
+
+    bool needs_barrier = false;
+    if (writing || access.layout != resource.last_layout) {
+        // writing or layout transition: possible write-after-read hazard
+        // execution dependency w.r.t. last access
+        needs_barrier |=
+                pstate.needs_execution_barrier(resource.last_access.serial, resource.last_stage_uses);
+    }
+    else {
+        // reading, same layout: execution dependency w.r.t. last write to resource
+        bool needs_barrier =
+            pstate.needs_execution_barrier(resource.last_write.serial, resource.last_stage_uses);
+    }
+
+    if (needs_barrier) {
+        // insert execution barrier:
+        // resource.last_stage_uses -> access.details.stage
+        src_stage_flags |= resource.last_stage_uses;
+        dst_stage_flags |= access.input_stage;
+    }
+
+    // is a memory barrier necessary for this access?
+
+    // yes, if layout is different
+    const bool needs_layout_transition = resource.last_layout != access.layout;
+    // covers RAW hazards, and visibility acess different access types
+    const bool visibility_hazard =
+            (resource.last_access_flags & access.access_flags) != access.access_flags;
+    // covers WAW hazards across the same access type (writes must happen in order)
+    const bool waw_hazard = writing && is_write_access(resource.last_access_flags);
+
+    if (needs_layout_transition || visibility_hazard || waw_hazard) {
+        if (resource.type() == resource_type::image
+                || resource.type() == resource_type::swapchain_image) {
+            fmt::print("image barrier #{} {},{} -> {},{}\n", resource.name(),
+                    to_string(resource.last_layout), to_string(resource.last_access_flags),
+                    to_string(access.layout), to_string(access.access_flags));
+        } else if (resource.type() == resource_type::buffer) {
+            fmt::print("buffer barrier #{} {} -> {}\n", resource.name(),
+                    to_string(resource.last_access_flags), to_string(access.access_flags));
+        }
+    }
+
+    resource.last_layout = access.layout;
+    resource.last_stage_uses = access.output_stage;
+
+    if (writing || needs_layout_transition) {
+        // The resource is modified, either through an actual write or a layout transition.
+        // The last version of the contents is visible only for the access flags given in this task.
+        resource.last_access_flags = access.access_flags;
+    } else {
+        // Read-only access, a barrier has been inserted so that all writes to the resource are visible.
+        // Combine with the previous access flags.
+        resource.last_access_flags |= access.access_flags;
+    }
+
+    // update access serials
+    if (writing) {
+        resource.last_write = snn;
+    } 
+    resource.last_access = snn;
+}    
+
+struct ready_task {
+    size_t latest_pred_serial;
+    size_t index;
+
+    struct compare {
+        inline constexpr bool operator()(const ready_task& lhs, const ready_task& rhs) {
+            return lhs.latest_pred_serial > rhs.latest_pred_serial;
+        }
+    };
+};
+
+using task_priority_queue =
+std::priority_queue<ready_task, std::vector<ready_task>, ready_task::compare>;
+
+static void dump_set(variable_set s) {
+    bool first = true;
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i]) {
+            if (first) {
+                fmt::print("{{{:02d}", i);
+                first = false;
+            } else {
+                fmt::print(",{:02d}", i);
+            }
+        }
+    }
+    if (first) {
+        fmt::print("{{}}");
+    } else {
+        fmt::print("}}");
+    }
+}
+
+struct schedule_ctx {
+    device_impl_ptr device;
+    queue_indices queues;
+    variable_set submitted_tasks;  // set of submitted tasks
+    variable_set ready_tasks;  // set of tasks ready to be submitted   
+    task_priority_queue ready_queue;  // queue of tasks ready to be submitted
+    serial_number next_sn;      // serial number of the next task to be scheduled
+    std::span<task> tasks;
+    std::span<temporary> temporaries;
+    pipeline_state pstate[max_queues];
+
+    std::vector<variable_set> reachability; // reachability matrix [to][from]
+    std::vector<variable_set> live_sets;  // live-sets for each task
+    std::vector<variable_set> use_sets;  // use-sets for each task
+    std::vector<variable_set> def_sets;  // def-sets for each task
+    variable_set live;  // set of live temporaries after the last scheduled task
+    variable_set dead;  // set of dead temporaries after the last scheduled task
+    variable_set gen;  // temporaries that just came alive after the last scheduled task
+    variable_set kill;  // temporaries that just dropped dead after the last scheduled task
+    variable_set mask;  // auxiliary set
+    variable_set tmp;  //
+
+
+    schedule_ctx(
+        queue_indices queues, 
+        serial_number base_sn,
+        std::span<task> tasks, 
+        std::span<temporary> temporaries) : 
+        queues{ queues },
+        next_sn{ base_sn },
+        tasks{ tasks },
+        temporaries{temporaries}
+    {
+        const auto n_task = tasks.size();
+        const auto n_tmp = temporaries.size();
+        reachability = transitive_closure(tasks);
+        submitted_tasks.resize(n_task, false);
+        ready_tasks.resize(n_task, false);
+        live.resize(n_tmp);
+        dead.resize(n_tmp);
+        gen.resize(n_tmp);
+        kill.resize(n_tmp);
+        mask.resize(n_tmp);
+        tmp.resize(n_tmp);
+        use_sets.resize(n_task);
+        def_sets.resize(n_task);
+        live_sets.resize(n_task);
+
+        for (size_t i = 0; i < n_task; ++i) {
+            use_sets[i].resize(n_tmp);
+            def_sets[i].resize(n_tmp);
+            live_sets[i].resize(n_tmp);
+
+            for (const auto& r : tasks[i].accesses) {
+                if (is_read_access(r.details.access_flags)) { use_sets[i].set(r.index); }
+                if (is_write_access(r.details.access_flags)) { def_sets[i].set(r.index); }
+            }
+        }
+    }
+
+    /*/// @brief Assigns a memory block for the given temporary, 
+    /// possibly aliasing with a temporary that can be proven dead in the current scheduling state.
+    /// @param tmp_index the index of the temporary to assign a memory block to
+    void assign_device_memory(size_t tmp_index) 
+    {
+        auto& tmp0 = temporaries[tmp_index].resource;
+
+        // skip if it doesn't need allocation
+        if (!tmp0->is_virtual()) return;
+        if (tmp0->allocated) return;
+
+        auto alloc_requirements =
+            static_cast<virtual_resource&>(*tmp0).get_allocation_requirements(device);
+
+        // resource became alive, if possible, alias with a dead
+        // temporary, otherwise allocate a new one.
+
+        if (!(alloc_requirements.flags & allocation_flag::aliasable)) {
+            // resource not aliasable, because it was explicitly
+            // requested to be not aliasable, or because there's still
+            // an external handle to it.
+            allocations.push_back(alloc_requirements);
+            alloc_map.push_back(allocations.size() - 1);
+        }
+        else {
+            // whether we managed to find a dead resource to alias with
+            bool aliased = false;
+            for (size_t t1 = 0; t1 < n_tmp; ++t1) {
+                // filter out live resources
+                if (!dead[t1]) continue;
+
+                auto i_alloc = alloc_map[t1];
+                auto& dead_alloc_requirements = allocations[i_alloc];
+
+                if (adjust_allocation_requirements(
+                    dead_alloc_requirements, alloc_requirements)) {
+                    // the two resources may alias; the requirements
+                    // have been adjusted
+                    alloc_map[t0] = i_alloc;
+                    // not dead anymore
+                    dead[t1] = false;
+                    aliased = true;
+                    break;
+                }
+
+                // otherwise continue
+            }
+
+            // no aliasing opportunities
+            if (!aliased) {
+                // new allocation
+                allocations.push_back(alloc_requirements);
+                alloc_map[t0] = allocations.size() - 1;
+            }
+        }
+    }*/
+
+
+    void update_liveness(size_t task_index) {
+        // update live/dead sets
+        // 
+        // a resource becomes live if it wasn't live before and it's used in this task (use or def).
+        // a resource becomes dead if 
+        // - it was live before 
+        // - it's not used in any task that isn't a predecessor of the current task (no use between defs)
+        // - we know, because of previous execution barriers, that all pipeline stages accessing the resource have finished 
+        //      - NOTE: never insert a barrier just to improve aliasing
+         // determine the resources live before this task
+        const auto& t = tasks[task_index];
+        const auto n_task = tasks.size();
+        const auto n_tmp = temporaries.size();
+
+        //live.reset();
+        //for (auto p : t.preds) {
+        //    live |= live_sets[p];
+        //}
+
+        // determine the resources that come alive in this task (
+        gen.reset();
+        gen |= use_sets[task_index]; // "use" == read access
+        gen |= def_sets[task_index]; // "def" == write access
+        gen -= live;    // exclude those that were already live
+
+        // add uses & defs to the live set
+        live |= use_sets[task_index];
+        live |= def_sets[task_index];
+
+        // initialize kill set to all live temps, and progressively remove 
+        kill = live;
+        // don't kill defs and uses of the current task
+        kill -= use_sets[task_index];
+        kill -= def_sets[task_index];
+
+        mask.reset();
+
+        // kill set calculation: remove temps accessed in parallel branches
+        for (size_t j = 0; j < n_task; ++j) {
+            if (j == task_index || reachability[j][task_index] || reachability[task_index][j]) continue;
+            kill -= use_sets[j];
+            kill -= def_sets[j];
+        }
+
+        // now look for uses and defs on the successor branches
+        // if there's a def before any use, or no use at all, then consider the
+        // resource dead (its contents are not going to be used anymore on this
+        // branch).
+        for (size_t succ = task_index + 1; succ < n_task; ++succ) {
+            if (!reachability[succ][task_index]) continue;
+
+            // def use mask kill mask
+            // 0   0   0    kill 0
+            // 1   0   0    1    1
+            // 0   1   0    0    1
+            // 1   1   0    0    1
+
+            // tmp = bits to clear
+            tmp = use_sets[succ];
+            tmp.flip();
+            tmp |= mask;
+            kill &= tmp;
+            mask |= def_sets[succ];
+        }
+
+        // now ensure that all pipeline stages have finished accessing the potentially killed resource
+        for (size_t i = 0; i < n_tmp; ++i) {
+            if (!kill[i]) continue;
+            const auto& resource = *temporaries[i].resource;
+
+            if (pstate[resource.last_access.queue].needs_execution_barrier(resource.last_access.serial, resource.last_stage_uses)) {
+                kill.reset(i);  // execution barrier needed, cannot ensure that the resource is dead
+            }
+        }
+
+        // add resources to the dead set.
+        dead |= kill;
+
+        // update live sets
+        live -= kill;
+        live_sets[task_index] = live;
+
+        fmt::print("LIVE:");
+        dump_set(live);
+        fmt::print(" | GEN:");
+        dump_set(gen);
+        fmt::print(" | KILL:");
+        dump_set(kill);
+        fmt::print("\n");
+    }  
+
+    /// @brief builds set of tasks ready to be submitted
+    /// @return 
+    void update_ready_queue()
+    {
+        const auto n_task = tasks.size();
+
+        for (size_t i = 0; i < n_task; ++i) {
+            const auto& t = tasks[i];
+            if (submitted_tasks[i] || ready_tasks[i]) continue;
+
+            if (t.preds.size() == 0 || std::all_of(t.preds.begin(), t.preds.end(), [&](size_t i) {
+                return submitted_tasks[i];
+                })) {
+                // 1. max overlap
+                size_t latest_pred_serial = 0;
+                for (auto pred : t.preds) {
+                    latest_pred_serial = std::max(latest_pred_serial, pred);
+                }
+
+                ready_tasks.set(i);
+                ready_queue.push(ready_task{ .latest_pred_serial = latest_pred_serial, .index = i });
+            }
+        }
+    }
+
+
+    /// @brief 
+    /// @param ctx Context kept across calls to schedule_task
+    /// @param task_index 
+    /// @param sn 
+    /// @param ready_queue_size 
+    void schedule_task(size_t task_index)
+    {
+        const auto n_tmp = temporaries.size();
+        const auto n_task = tasks.size();
+
+        const auto sn = next_sn++;
+        task& t = tasks[task_index];
+        t.snn.serial = sn;  // replace the temporary serial with the final one
+
+        // --- determine which on which queue to run the task
+        size_t q = queues.graphics;
+        switch (t.type) {
+        case task_type::compute_pass:
+            // a compute pass is eligible for async compute, but it must not be
+            // a critical task (i.e. the graphics queue must not starve in the meantime).
+            q = !ready_queue.empty() ? queues.compute : queues.graphics;
+            break;
+        case task_type::render_pass: q = queues.graphics; break;
+        case task_type::present: q = queues.present; break;
+        case task_type::transfer: q = queues.transfer; break;
+        }
+        t.snn.queue = q;
+
+
+        // --- infer execution & memory dependencies from resource accesses
+        vk::PipelineStageFlags src_stage_flags;
+        vk::PipelineStageFlags dst_stage_flags;
+
+        for (const auto& access : t.accesses) {
+            resource& r = *temporaries[access.index].resource;
+            memory_dependency(r, access.details, t.snn, pstate[q], src_stage_flags, dst_stage_flags);
+        }
+
+        if (src_stage_flags || dst_stage_flags) {
+            // execution barrier necessary
+            fmt::print("execution barrier: {} -> {}\n", to_string(src_stage_flags),
+                to_string(dst_stage_flags));
+            pstate[q].apply_execution_barrier(t.snn.serial, src_stage_flags);
+        }
+
+        // --- update liveness sets
+        update_liveness(task_index);
+
+        fmt::print("Task {} (SNN {}:{})\n", t.name, q, sn);
+        submitted_tasks.set(task_index, true);
+    }
+
+    bool schedule_next() {
+        update_ready_queue();
+        if (ready_queue.empty()) return false;
+        size_t next_task = ready_queue.top().index;
+        ready_queue.pop();
+        schedule_task(next_task);
+        return true;
+    }
+};
+
+
+
 void queue_impl::enqueue_pending_tasks() {
     const auto vk_device = device_->get_vk_device();
+
+    dump_batch(batch_);
 
     // --- short-circuit if no tasks
     if (batch_.tasks.empty()) { return; }
 
-    const auto n_tmp = batch_.temporaries.size();
-    const auto n_task = batch_.tasks.size();
+    //---------------------------------------------------
+    // main scheduling loop
 
-    // --- print debug information
-#ifdef GRAAL_TRACE_BATCH_SUBMIT
-    fmt::print("=== submitting batch (SN{} .. SN{}) ===\n", batch_.start_serial,
-            batch_.finish_serial());
+    schedule_ctx ctx{ queue_indices_, batch_.start_serial, batch_.tasks, batch_.temporaries };
+    while (ctx.schedule_next()) {}
 
-    fmt::print("Temporaries:\n");
-    size_t tmp_index = 0;
-    for (const auto& tmp : batch_.temporaries) {
-        fmt::print(" - #{}: {} discarded={} last_write={}\n", tmp_index++,
-                tmp.resource->name().empty() ? "<unnamed>" : tmp.resource->name(),
-                tmp.resource->has_user_refs(), tmp.last_write);
+    // reorder tasks
+    // from here on, preds and succs are invalid.
+    std::sort(batch_.tasks.begin(), batch_.tasks.end(),
+            [](const task& a, const task& b) { return a.snn.serial < b.snn.serial; });
+
+    fmt::print("reordered tasks:\n");
+    for (const auto& t : batch_.tasks) {
+        fmt::print("   `{}` (SNN {}:{})\n", t.name, t.snn.queue, t.snn.serial);
     }
 
-    fmt::print("Tasks:\n");
-    size_t task_index = 0;
-    for (auto&& t : batch_.tasks) {
-        fmt::print(" - task #{} {}\n", task_index, t.name.empty() ? "<unnamed>" : t.name);
-        if (!t.preds.empty()) {
-            fmt::print("   preds: ");
-            for (auto pred : t.preds) {
-                fmt::print("{},", pred);
-            }
-            fmt::print("\n");
-        }
-        if (!t.succs.empty()) {
-            fmt::print("   succs: ");
-            for (auto s : t.succs) {
-                fmt::print("{},", s);
-            }
-            fmt::print("\n");
-        }
 
-        if (!t.accesses.empty()) {
-            fmt::print("   accesses: \n");
-            for (const auto& access : t.accesses) {
-                fmt::print("      #{} flags={}\n"
-                           "          input_stage={}\n"
-                           "          output_stage={}\n",
-                        access.index, to_string(access.details.access_flags),
-                        to_string(access.details.input_stage),
-                        to_string(access.details.output_stage));
-                const auto ty = batch_.temporaries[access.index].resource->type();
-                if (ty == resource_type::image || ty == resource_type::swapchain_image) {
-                    fmt::print("          layout={}\n", to_string(access.details.layout));
-                }
-            }
-            fmt::print("\n");
-        }
-        task_index++;
-    }
-#endif
+    // --- external synchronization ---
 
-    //
-    auto batch_resource_memory =
-            allocate_batch_memory(device_, batch_.start_serial, batch_.tasks, batch_.temporaries);
-
-    // --- 3. set up external synchronization for resources that are could be accessed in the next batch
+    /*// --- 3. set up external synchronization for resources that are could be accessed in the next batch
     // This can affect the creation of the submission batches (next step).
     for (size_t i = 0; i < n_tmp; ++i) {
         auto& tmp = *batch_.temporaries[i].resource;
@@ -675,55 +1341,7 @@ void queue_impl::enqueue_pending_tasks() {
                 producer->signal.enabled = true;
             }
         }
-    }
-
-    // --- 4. set up synchronization for cross-queue dependencies (TODO)
-    for (size_t i = 0; i < n_task; ++i) {
-        auto& task = batch_.tasks[i];
-
-        for (auto pred : batch_.tasks[i].preds) {
-            if (needs_synchronization(batch_.tasks[i], batch_.tasks[pred])) {
-                //pre_sync = true;
-                //break;
-            }
-        }
-
-        /*for (auto succ : tasks_[i]->succs) {
-            if (needs_synchronization(*tasks_[i], *tasks_[succ])) {
-                post_sync = true;
-                break;
-            }
-        }*/
-    }
-
-    // --- 3. partition the graph into submissions
-    struct submission {
-        std::vector<size_t> tasks;
-        serial_number wait_sn;  // 0 means no wait
-        serial_number signal_sn;  // 0 means no signal
-    };
-
-    // build batches
-    std::vector<submission> submissions[max_queues];
-    std::vector<size_t> traverse_stack;
-
-    for (size_t i = 0; i < n_task; ++i) {
-        bool pre_sync = false;
-        bool post_sync = false;
-
-        for (auto pred : batch_.tasks[i].preds) {
-            if (needs_synchronization(batch_.tasks[i], batch_.tasks[pred])) {
-                pre_sync = true;
-                break;
-            }
-        }
-        for (auto succ : batch_.tasks[i].succs) {
-            if (needs_synchronization(batch_.tasks[i], batch_.tasks[succ])) {
-                post_sync = true;
-                break;
-            }
-        }
-    }
+    }*/
 
     // two tasks are in different submissions if:
     // - they are not scheduled into the same queue
@@ -734,76 +1352,9 @@ void queue_impl::enqueue_pending_tasks() {
     // --- 3.1 get command pool/allocate command buffers
 
     // TODO parallel submission
-    for (size_t i = 0; i < n_task; ++i) {
-        /*for (auto&& cmd : tasks_[i]->callbacks) {
-            cmd(cb);
-        }*/
-        /*auto task = batch_.tasks[i].get();
-        if (task->type == task_type::present) {
-            auto present = static_cast<present_task*>(task);
-            const vk::Semaphore wait_semaphores[] = {present->wait_binary[0]};
-            const vk::SwapchainKHR swapchains[] = {present->swapchain};
-            const uint32_t image_indices[] = {present->image_index};
-            vk::PresentInfoKHR present_info{
-                    .waitSemaphoreCount = 1,
-                    .pWaitSemaphores = wait_semaphores,
-                    .swapchainCount = 1,
-                    .pSwapchains = swapchains,
-                    .pImageIndices = image_indices,
-                    .pResults = {},
-            };
 
-            const auto graphics_queue = device_->get_graphics_queue();
-            graphics_queue.presentKHR(present_info);
-        }*/
-    }
-
-    // pacing: wait for frame N - (max_batches_in_flight+1) before starting
-    // submission pacing is important because we have to reclaim resources on
-    // the CPU side at some point
-
-    // With NFLIGHT=1, BATCH=1 (first batch)
-    // do not wait
-    // BATCH=2, do not wait
-    // BATCH=3, wait on 1
-    //
-
-    /*// if there are too many in-flight batches, wait
-    if (in_flight_batches_.size() >= props_.max_batches_in_flight) {
-        wait_for_batch(current_batch_ - (props_.max_batches_in_flight + 1));
-    }
-
-    // Wait for batch `N-max_batches_in_flight` to finish
-    const uint64_t wait_values[] = {
-            should_wait ? (current_batch_ - props_.max_batches_in_flight) : 0};
-    // Signal current batch
-    const uint64_t signal_values[] = {current_batch_};
-    const vk::Semaphore semaphores[] = {batch_index_semaphore_};
-    const vk::CommandBuffer cbs[] = {cb};
-
-    const vk::TimelineSemaphoreSubmitInfo timeline_submit_info{.waitSemaphoreValueCount = 1,
-            .pWaitSemaphoreValues = wait_values,
-            .signalSemaphoreValueCount = 1,
-            .pSignalSemaphoreValues = signal_values};
-
-    const vk::PipelineStageFlags wait_stages[] = {vk::PipelineStageFlagBits::eAllCommands};
-
-    const vk::SubmitInfo submit_info = {.pNext = &timeline_submit_info,
-            .waitSemaphoreCount = 1,
-            .pWaitSemaphores = semaphores,
-            .pWaitDstStageMask = wait_stages,
-            .commandBufferCount = 1,
-            .pCommandBuffers = cbs,
-            .signalSemaphoreCount = 1,
-            .pSignalSemaphores = semaphores};
-
-    const auto queue = device_->get_graphics_queue();
-    queue.submit(submit_info, nullptr);
-    //queue.
-
-    //temporaries_.clear();
-    //tasks_.clear();
-    current_batch_++;*/
+    batch_thread_resources thread_resources{.cb_pool = get_command_buffer_pool()};
+    batch_.threads.push_back(std::move(thread_resources));
 
     // stash the current batch
     in_flight_batches_.push_back(std::move(batch_));
@@ -813,29 +1364,101 @@ void queue_impl::enqueue_pending_tasks() {
     batch_.temporaries.clear();
     batch_.threads.clear();
     batch_.tasks.clear();
+    tmp_indices.clear();
 }
 
 void queue_impl::present(swapchain_image&& image) {
-    enqueue_pending_tasks();
+    /*enqueue_pending_tasks();
+
     auto impl = std::move(image.impl_);
+    const auto present_queue =
+            device_->get_graphics_queue();  // FIXME we assume that the present queue is also the main graphics queue
 
-    // there should be a semaphore set on the resource
+    // TODO we must submit a command buffer transition the image layout to PRESENT_SRC
+    // if it is not in that layout already.
+    // Ideally this should be done in the previous batch, but unfortunately
+    // if the previous batch is already submitted there's no way to predict in what state
+    // the swapchain image is.
+
+    if (impl->last_layout != vk::ImageLayout::ePresentSrcKHR) {
+        // need transfer
+        const auto vk_device = device_->get_vk_device();
+        auto prev_batch = in_flight_batches_.back();  // last submitted batch
+        auto cb = prev_batch.threads[0].cb_pool.fetch_command_buffer(device_->get_vk_device());
+
+        // semaphore that is going to be signalled when the layout transition is done
+        // TODO who owns it? (i.e. when do can we reclaim it?)
+        vk::Semaphore transition_finished_semaphore = device_->create_binary_semaphore();
+
+        // build command buffer with layout transition
+        cb.begin(vk::CommandBufferBeginInfo{});
+        vk::ImageMemoryBarrier transition_barrier{
+                .oldLayout = impl->last_layout,
+                .newLayout = vk::ImageLayout::ePresentSrcKHR,
+                .image = impl->get_vk_image(),
+        };
+        cb.pipelineBarrier(
+            vk::PipelineStageFlags{},   // FIXME this cannot be zero, we must track what is the last access (XXX do we still have to put a barrier if there's a semaphore sync?) 
+            vk::PipelineStageFlagBits::eBottomOfPipe,       // FIXME understand why 
+            vk::DependencyFlags{}, 0, nullptr, 0, nullptr, 1, &transition_barrier);
+        cb.end();
+
+        // extract the semaphore that we must wait for, if there's one.
+        // if there's none, then wait on the timeline for the last write serial.
+        // at the same time, replace it with the semaphore that is going to be signalled when the transition is complete.
+        auto semaphore = std::exchange(impl->wait_semaphore, transition_finished_semaphore);
+
+        if (semaphore) {
+            // waiting on binary semaphore
+            // (this should only happen when the swapchain image is presented without having ever been accessed before, which is not very useful).
+            // TODO implement
+            throw std::logic_error{"unimplemented"};
+        } else {
+            const task* producer = get_submitted_task(impl->last_write_serial);
+            if (producer) {
+                // waiting on timeline
+                const auto queue = producer->signal.queue;
+                const auto timeline = timelines_[queue];
+                const serial_number wait_value = impl->last_write_serial;
+                const vk::TimelineSemaphoreSubmitInfo timeline_submit_info{
+                        .waitSemaphoreValueCount = 1, .pWaitSemaphoreValues = &wait_value};
+                const vk::PipelineStageFlags wait_dst_stage_mask =
+                        vk::PipelineStageFlagBits::eAllCommands;  // TODO maybe less?
+
+                const vk::SubmitInfo submit_info = {.pNext = &timeline_submit_info,
+                        .waitSemaphoreCount = 1,
+                        .pWaitSemaphores = &timeline,
+                        .pWaitDstStageMask = &wait_dst_stage_mask,
+                        .commandBufferCount = 1,
+                        .pCommandBuffers = &cb,
+                        .signalSemaphoreCount = 1,
+                        .pSignalSemaphores = &transition_finished_semaphore};
+                present_queue.submit(1, &submit_info, nullptr);
+            } else {
+                // no wait, only signal
+                const vk::SubmitInfo submit_info = {.commandBufferCount = 1,
+                        .pCommandBuffers = &cb,
+                        .signalSemaphoreCount = 1,
+                        .pSignalSemaphores = &transition_finished_semaphore};
+                present_queue.submit(1, &submit_info, nullptr);
+            }
+        }
+    }
+
+    // there should be a semaphore set on the resource, consume it
     auto semaphore = std::exchange(impl->wait_semaphore, nullptr);
-
-    const vk::Semaphore wait_semaphores[] = {semaphore};
-    const vk::SwapchainKHR swapchains[] = {impl->get_vk_swapchain()};
-    const uint32_t image_indices[] = {impl->index()};
+    const vk::SwapchainKHR swapchain = impl->get_vk_swapchain();
+    const uint32_t index = impl->index();
     vk::PresentInfoKHR present_info{
             .waitSemaphoreCount = 1,
-            .pWaitSemaphores = wait_semaphores,
+            .pWaitSemaphores = &semaphore,
             .swapchainCount = 1,
-            .pSwapchains = swapchains,
-            .pImageIndices = image_indices,
+            .pSwapchains = &swapchain,
+            .pImageIndices = &index,
             .pResults = {},
     };
 
-    const auto graphics_queue = device_->get_graphics_queue();
-    graphics_queue.presentKHR(present_info);
+    present_queue.presentKHR(present_info);*/
 }
 
 void queue_impl::wait_for_task(uint64_t sequence_number) {
@@ -870,7 +1493,7 @@ void queue_impl::wait_for_task(uint64_t sequence_number) {
 /// @param use_binary_semaphore whether to synchronize using a binary semaphore.
 /// before < after; if use_binary_semaphore == true, then before must also correspond to an unsubmitted task.
 void queue_impl::add_task_dependency(task& t, serial_number before, bool use_binary_semaphore) {
-    assert(t.serial > before);
+    assert(t.snn.serial > before);
 
     if (before <= completed_serial_) {
         // no sync needed, task has already completed
@@ -888,7 +1511,7 @@ void queue_impl::add_task_dependency(task& t, serial_number before, bool use_bin
                 before - batch_.start_serial - 1;  // SN relative to start of batch
         auto& before_task = batch_.tasks[local_task_index];
         t.preds.push_back(local_task_index);
-        before_task.succs.push_back(t.serial - batch_.start_serial - 1);
+        before_task.succs.push_back(t.snn.serial - batch_.start_serial - 1);
     }
 }
 
@@ -913,7 +1536,7 @@ void queue_impl::add_resource_dependency(
 
     if (writing) {
         // we're writing to this resource: set last write SN
-        tmp.last_write = t.serial;
+        tmp.last_write = t.snn.serial;
     }
 
     // add resource dependency to the task and update resource usage flags
@@ -931,8 +1554,8 @@ void handler::add_buffer_access(std::shared_ptr<detail::buffer_impl> buffer,
     detail::resource_access_details details;
     details.layout = vk::ImageLayout::eUndefined;
     details.access_flags = access_flags;
-    details.input_stage = input_stage;
-    details.output_stage = output_stage;
+    details.input_stage |= input_stage;
+    details.output_stage |= output_stage;
     queue_.add_resource_dependency(task_, buffer, details);
 }
 
@@ -943,9 +1566,21 @@ void handler::add_image_access(std::shared_ptr<detail::image_impl> image,
     detail::resource_access_details details;
     details.layout = layout;
     details.access_flags = access_flags;
-    details.input_stage = input_stage;
-    details.output_stage = output_stage;
+    details.input_stage |= input_stage;
+    details.output_stage |= output_stage;
     queue_.add_resource_dependency(task_, image, details);
+}
+
+// Called by image accessors to register an use of an image in a task
+void handler::add_image_access(std::shared_ptr<detail::swapchain_image_impl> swapchain_image,
+        vk::AccessFlags access_flags, vk::PipelineStageFlags input_stage,
+        vk::PipelineStageFlags output_stage, vk::ImageLayout layout) const {
+    detail::resource_access_details details;
+    details.layout = layout;
+    details.access_flags = access_flags;
+    details.input_stage |= input_stage;
+    details.output_stage |= output_stage;
+    queue_.add_resource_dependency(task_, swapchain_image, details);
 }
 
 //-----------------------------------------------------------------------------

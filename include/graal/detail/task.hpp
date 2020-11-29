@@ -1,6 +1,7 @@
 #pragma once
 #include <graal/detail/sequence_number.hpp>
 #include <graal/detail/swapchain_impl.hpp>
+#include <graal/queue_class.hpp>
 
 #include <cstddef>
 #include <functional>
@@ -20,15 +21,21 @@ inline constexpr task_index invalid_task_index = (std::size_t) -1;
 /// @brief Task callback
 using submit_callback_fn = void(vk::CommandBuffer);
 
-/// @brief Maximum number of queues for the application
-constexpr inline size_t max_queues = 4;
-
 /// @brief Represents a resource access in a task.
 struct resource_access_details {
-    vk::ImageLayout layout;  // only valid if resource is an image
+    /// @brief The layout into which the image must be before beginning the task.
+    vk::ImageLayout layout;  
+    /// @brief How the task is going to access the resource.
     vk::AccessFlags access_flags;
-    vk::PipelineStageFlags input_stage; // stage that reads the resource (can be empty for write-only)
-    vk::PipelineStageFlags output_stage; // stage that writes to the resource (can be empty for read-only)
+    vk::PipelineStageFlags input_stage;
+    vk::PipelineStageFlags output_stage;
+};
+
+enum class task_type {
+    render_pass,
+    compute_pass,
+    transfer,
+    present
 };
 
 struct task {
@@ -38,7 +45,13 @@ struct task {
     };
 
     std::string name;
-    serial_number serial;
+    task_type type = task_type::render_pass;
+
+    /// @brief The submission number (SNN).
+    /// NOTE a first serial is assigned when the task is created, without a queue, for the purposes of 
+    /// DAG building. However, the serial might change after submission, due to task reordering.
+    submission_number snn;
+
     std::vector<uint64_t> preds;
     std::vector<uint64_t> succs;
     uint64_t waits[max_queues] = {};
@@ -52,6 +65,7 @@ struct task {
 
     std::vector<vk::Semaphore> wait_binary;  // TODO unique_handle
     std::vector<vk::Semaphore> signal_binary;
+    
     std::vector<resource_access> accesses;
 };
 

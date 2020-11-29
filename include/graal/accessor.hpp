@@ -252,4 +252,6 @@ template <image_type D, bool Ext> accessor(image<D, Ext>&, pixel_transfer_source
 
 // clang-format on
 
+
+
 } // namespace graal

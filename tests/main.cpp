@@ -367,28 +367,37 @@ pipeline_states init_pipeline(device& dev) {
     image NAME{virtual_image, image_format::r16g16_sfloat, range{1280, 720}}; \
     NAME.set_name(#NAME);
 
-#define READ(img)                                                                                  \
+#define COMPUTE_READ(img)                                                              \
+    h.add_image_access(img, vk::AccessFlagBits::eShaderRead,                           \
+            vk::PipelineStageFlagBits::eComputeShader, {}, vk::ImageLayout::eGeneral); \
+    img.add_usage_flags(vk::ImageUsageFlagBits::eStorage);
+
+#define COMPUTE_WRITE(img)                                                         \
+    h.add_image_access(img, vk::AccessFlagBits::eShaderWrite, {},                  \
+            vk::PipelineStageFlagBits::eComputeShader, vk::ImageLayout::eGeneral); \
+    img.add_usage_flags(vk::ImageUsageFlagBits::eStorage);
+
+#define SAMPLE(img)                                                                                \
     h.add_image_access(img, vk::AccessFlagBits::eShaderRead,                                       \
             vk::PipelineStageFlagBits::eVertexShader | vk::PipelineStageFlagBits::eFragmentShader, \
             {}, vk::ImageLayout::eShaderReadOnlyOptimal);                                          \
-    img.add_usage_flags(vk::ImageUsageFlagBits::eSampled);
+    img.add_usage_flags(vk::ImageUsageFlagBits::eStorage);
 
-#define DRAW(img)                                                      \
-    h.add_image_access(img, vk::AccessFlagBits::eColorAttachmentWrite, \
-            vk::PipelineStageFlagBits::eColorAttachmentOutput,         \
-            vk::PipelineStageFlagBits::eColorAttachmentOutput,         \
-            vk::ImageLayout::eColorAttachmentOptimal);                 \
+#define DRAW(img)                                                          \
+    h.add_image_access(img, vk::AccessFlagBits::eColorAttachmentWrite, {}, \
+            vk::PipelineStageFlagBits::eColorAttachmentOutput,             \
+            vk::ImageLayout::eColorAttachmentOptimal);                     \
     img.add_usage_flags(vk::ImageUsageFlagBits::eColorAttachment);
 
-#define WRITE(img)                                                                  \
-    h.add_image_access(img, vk::AccessFlagBits::eShaderWrite,                       \
-            vk::PipelineStageFlagBits::eFragmentShader,                             \
-            vk::PipelineStageFlagBits::eFragmentShader, vk::ImageLayout::eGeneral); \
-    img.add_usage_flags(vk::ImageUsageFlagBits::eStorage);
+#define DRAW_SWAPCHAIN(img)                                                                      \
+    h.add_image_access(img, vk::AccessFlagBits::eColorAttachmentWrite, vk::PipelineStageFlags{}, \
+            vk::PipelineStageFlagBits::eColorAttachmentOutput,                                   \
+            vk::ImageLayout::eColorAttachmentOptimal);
 
 void test_shader(device& device);
 void test_case_1(graal::queue& q);
-void test_case_2(graal::queue& q);
+void test_parallel_branches(graal::queue& q);
+void test_aliasing_pipelining_conflicts(graal::queue& q);
 
 /// @brief Returns the contents of a text file as a string
 /// @param path
@@ -558,6 +567,8 @@ int main() {
     queue q{dev};
 
     test_case_1(q);
+    test_parallel_branches(q); 
+    test_aliasing_pipelining_conflicts(q);
 
     auto pp_state = init_pipeline(dev);
 
@@ -591,6 +602,7 @@ int main() {
 
         q.schedule([&](handler& h) {
             //h.clear_color_image();  //
+            DRAW_SWAPCHAIN(next_image)
         });
         q.present(std::move(next_image));
         q.enqueue_pending_tasks();
@@ -609,6 +621,71 @@ int main() {
 void draw_frame(graal::queue& q) {
 }
 
+namespace graal {
+
+enum class attachment_load_op {
+    clear = VK_ATTACHMENT_LOAD_OP_CLEAR,
+    load = VK_ATTACHMENT_LOAD_OP_LOAD,
+    dont_care = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+};
+
+enum class attachment_store_op {
+    store = VK_ATTACHMENT_STORE_OP_STORE,
+    dont_care = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+};
+
+struct clear_color_value {
+    clear_color_value(float r, float g, float b, float a) {
+        value.float32[0] = r;
+        value.float32[1] = g;
+        value.float32[2] = b;
+        value.float32[3] = a;
+    }
+
+    clear_color_value(int32_t r, int32_t g, int32_t b, int32_t a) {
+        value.int32[0] = r;
+        value.int32[1] = g;
+        value.int32[2] = b;
+        value.int32[3] = a;
+    }
+
+    clear_color_value(uint32_t r, uint32_t g, uint32_t b, uint32_t a) {
+        value.uint32[0] = r;
+        value.uint32[1] = g;
+        value.uint32[2] = b;
+        value.uint32[3] = a;
+    }
+
+    VkClearColorValue value;
+};
+
+struct clear_depth_stencil_value {};
+
+struct clear_value {
+    VkClearValue cv;
+};
+
+struct attachment_desc {
+    // color_attachment, color format
+    template<image_type D, bool Ext>
+    attachment_desc(image<D, Ext> image, attachment_load_op load_op, attachment_store_op store_op,
+            clear_color_value clear_value = {});
+
+    // color_attachment, depth-stencil format
+    template<image_type D, bool Ext>
+    attachment_desc(image<D, Ext> image, attachment_load_op load_op, attachment_store_op store_op,
+            attachment_load_op stencil_load_op, attachment_store_op stencil_store_op,
+            clear_depth_stencil_value clear_value = {});
+};
+
+struct render_pass_desc {
+    std::span<const attachment_desc> color_attachments;
+    std::span<const attachment_desc> input_attachments;
+    const attachment_desc* depth_attachment = nullptr;
+};
+
+}  // namespace graal
+
 //=============================================================================
 void test_case_1(graal::queue& q) {
     VIMG(A)
@@ -624,43 +701,42 @@ void test_case_1(graal::queue& q) {
     VIMG(J)
     VIMG(K)
 
-    // q.schedule("INIT", [&](scheduler &sched) { WRITE(A) WRITE(B) WRITE(C) });
-
     q.schedule("T0", [&](handler& h) {
-        // image_accessor color{A, color_attachment, };
-        DRAW(A)
+        DRAW(A);
     });
-    q.schedule("T1", [&](handler& h) { DRAW(B) });
-    q.schedule("T2", [&](handler& h) { DRAW(C) });
 
-    q.schedule("T3", [&](handler& h) {
-        READ(A)
-        READ(B)
-        WRITE(D1)
-        WRITE(D2)
+    q.schedule("T1", [&](handler& h) { DRAW(B) });
+
+    q.schedule("T2", [&](handler& h) {
+        COMPUTE_READ(A)
+        COMPUTE_READ(B)
+        COMPUTE_WRITE(D1)
+        COMPUTE_WRITE(D2)
     });
+
+    q.schedule("T3", [&](handler& h) { DRAW(C) });
 
     q.schedule("T4", [&](handler& h) {
-        READ(D2)
-        READ(C)
-        WRITE(E)
+        COMPUTE_READ(D2)
+        COMPUTE_READ(C)
+        COMPUTE_WRITE(E)
     });
 
     q.schedule("T5", [&](handler& h) {
-        READ(D1)
-        WRITE(F)
+        COMPUTE_READ(D1)
+        COMPUTE_WRITE(F)
     });
 
     q.schedule("T6", [&](handler& h) {
-        READ(E)
-        READ(F)
-        WRITE(G)
+        COMPUTE_READ(E)
+        COMPUTE_READ(F)
+        COMPUTE_WRITE(G)
     });
 
-    q.schedule("T7", [&](handler& h) { READ(G) WRITE(H) });
-    q.schedule("T8", [&](handler& h) { READ(H) WRITE(I) });
-    q.schedule("T9", [&](handler& h) { READ(I) READ(G) WRITE(J) });
-    q.schedule("T10", [&](handler& h) { READ(J) WRITE(K) });
+    q.schedule("T7", [&](handler& h) { COMPUTE_READ(G) COMPUTE_WRITE(H) });
+    q.schedule("T8", [&](handler& h) { COMPUTE_READ(H) COMPUTE_WRITE(I) });
+    q.schedule("T9", [&](handler& h) { COMPUTE_READ(I) COMPUTE_READ(G) COMPUTE_WRITE(J) });
+    q.schedule("T10", [&](handler& h) { COMPUTE_READ(J) COMPUTE_WRITE(K) });
 
     /*A.discard();
   B.discard();
@@ -688,7 +764,7 @@ void test_case_1(graal::queue& q) {
     q.enqueue_pending_tasks();
 }
 
-void test_case_2(queue& q) {
+void test_parallel_branches(queue& q) {
     VIMG(S);
 
     VIMG(C);
@@ -700,17 +776,60 @@ void test_case_2(queue& q) {
         VIMG(B1);
         VIMG(B2);
         VIMG(B3);
-        q.schedule([&](handler& h) { WRITE(S) });
+        q.schedule([&](handler& h) { COMPUTE_WRITE(S) });
         // A branch
-        q.schedule([&](handler& h) { READ(S) WRITE(A1) });
-        q.schedule([&](handler& h) { READ(A1) WRITE(A2) });
-        q.schedule([&](handler& h) { READ(A2) WRITE(A3) });
+        q.schedule([&](handler& h) { COMPUTE_READ(S) COMPUTE_WRITE(A1) });
+        q.schedule([&](handler& h) { COMPUTE_READ(A1) COMPUTE_WRITE(A2) });
+        q.schedule([&](handler& h) { COMPUTE_READ(A2) COMPUTE_WRITE(A3) });
         // B branch
-        q.schedule([&](handler& h) { READ(S) WRITE(B1) });
-        q.schedule([&](handler& h) { READ(B1) WRITE(B2) });
-        q.schedule([&](handler& h) { READ(B2) WRITE(B3) });
+        q.schedule([&](handler& h) { COMPUTE_READ(S) COMPUTE_WRITE(B1) });
+        q.schedule([&](handler& h) { COMPUTE_READ(B1) COMPUTE_WRITE(B2) });
+        q.schedule([&](handler& h) { COMPUTE_READ(B2) COMPUTE_WRITE(B3) });
         // C
-        q.schedule([&](handler& h) { READ(A3) READ(B3) WRITE(C) });
+        q.schedule([&](handler& h) { COMPUTE_READ(A3) COMPUTE_READ(B3) COMPUTE_WRITE(C) });
     }
+    q.enqueue_pending_tasks();
+}
+
+void test_aliasing_pipelining_conflicts(graal::queue& q) {
+    {
+        VIMG(A);
+        VIMG(B);
+        VIMG(C);
+        VIMG(D);
+
+        // B must not alias with C or D
+
+        q.schedule([&](handler& h) {
+            h.add_image_access(A, vk::AccessFlagBits::eShaderWrite,
+                vk::PipelineStageFlagBits::eVertexShader, vk::PipelineStageFlagBits::eVertexShader,
+                vk::ImageLayout::eGeneral);
+            h.add_image_access(B, vk::AccessFlagBits::eColorAttachmentWrite,
+                vk::PipelineStageFlagBits::eColorAttachmentOutput,
+                vk::PipelineStageFlagBits::eColorAttachmentOutput,
+                vk::ImageLayout::eColorAttachmentOptimal);
+            });
+
+        q.schedule([&](handler& h) {
+            h.add_image_access(A, vk::AccessFlagBits::eShaderRead,
+                vk::PipelineStageFlagBits::eComputeShader,
+                vk::PipelineStageFlagBits::eComputeShader, vk::ImageLayout::eGeneral);
+
+            h.add_image_access(C, vk::AccessFlagBits::eShaderWrite,
+                vk::PipelineStageFlagBits::eComputeShader,
+                vk::PipelineStageFlagBits::eComputeShader, vk::ImageLayout::eGeneral);
+            });
+
+        q.schedule([&](handler& h) {
+            h.add_image_access(C, vk::AccessFlagBits::eShaderRead,
+                vk::PipelineStageFlagBits::eComputeShader,
+                vk::PipelineStageFlagBits::eComputeShader, vk::ImageLayout::eGeneral);
+
+            h.add_image_access(D, vk::AccessFlagBits::eShaderWrite,
+                vk::PipelineStageFlagBits::eComputeShader,
+                vk::PipelineStageFlagBits::eComputeShader, vk::ImageLayout::eGeneral);
+            });
+    }
+
     q.enqueue_pending_tasks();
 }

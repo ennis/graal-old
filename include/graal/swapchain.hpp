@@ -6,6 +6,7 @@
 #include <vulkan/vulkan.hpp>
 
 namespace graal {
+
 namespace detail {
 class queue_impl;
 class swapchain_impl;
@@ -14,6 +15,7 @@ class swapchain_impl;
 /// @brief
 class swapchain_image {
     friend class swapchain;
+    friend class handler;
     friend class detail::queue_impl;
 
 public:
