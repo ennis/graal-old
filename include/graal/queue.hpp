@@ -48,8 +48,6 @@ public:
         task_->callbacks.push_back(std::move(command_callback));
     }
 
-
-
     // Called by buffer accessors to register an use of a buffer in a task
     template<typename T, bool HostVisible>
     void add_buffer_access(buffer<T, HostVisible>& buffer, vk::AccessFlags access_flags,
@@ -64,10 +62,10 @@ public:
             vk::ImageLayout layout) const {
         add_image_access(image.impl_, access_flags, input_stage, output_stage, layout);
     }
-    
+
     void add_image_access(swapchain_image image, vk::AccessFlags access_flags,
-        vk::PipelineStageFlags input_stage, vk::PipelineStageFlags output_stage,
-        vk::ImageLayout layout) const {
+            vk::PipelineStageFlags input_stage, vk::PipelineStageFlags output_stage,
+            vk::ImageLayout layout) const {
         add_image_access(image.impl_, access_flags, input_stage, output_stage, layout);
     }
 
@@ -76,22 +74,15 @@ private:
     }
 
     // Called by image accessors to register a color attachment.
-    void add_color_attachment(
-        std::shared_ptr<detail::image_impl> image,
-        vk::AttachmentLoadOp load_op,
-        vk::AttachmentStoreOp store_op);
+    void add_color_attachment(std::shared_ptr<detail::image_impl> image,
+            vk::AttachmentLoadOp load_op, vk::AttachmentStoreOp store_op);
 
-    void add_depth_stencil_attachment(
-        std::shared_ptr<detail::image_impl> image,
-        vk::AttachmentLoadOp load_op,
-        vk::AttachmentStoreOp store_op, 
-        vk::AttachmentLoadOp stencil_load_op,
-        vk::AttachmentStoreOp stencil_store_op);
+    void add_depth_stencil_attachment(std::shared_ptr<detail::image_impl> image,
+            vk::AttachmentLoadOp load_op, vk::AttachmentStoreOp store_op,
+            vk::AttachmentLoadOp stencil_load_op, vk::AttachmentStoreOp stencil_store_op);
 
-    void add_input_attachment(
-        std::shared_ptr<detail::image_impl> image,
-        vk::AttachmentLoadOp load_op,
-        vk::AttachmentStoreOp store_op);
+    void add_input_attachment(std::shared_ptr<detail::image_impl> image,
+            vk::AttachmentLoadOp load_op, vk::AttachmentStoreOp store_op);
 
     // Called by buffer accessors to register an use of a buffer in a task
     void add_buffer_access(std::shared_ptr<detail::buffer_impl> buffer,
@@ -102,10 +93,10 @@ private:
     void add_image_access(std::shared_ptr<detail::image_impl> image, vk::AccessFlags access_flags,
             vk::PipelineStageFlags input_stage, vk::PipelineStageFlags output_stage,
             vk::ImageLayout layout) const;
-    
+
     void add_image_access(std::shared_ptr<detail::swapchain_image_impl> swapchain_image,
-        vk::AccessFlags access_flags, vk::PipelineStageFlags input_stage,
-        vk::PipelineStageFlags output_stage, vk::ImageLayout layout) const;
+            vk::AccessFlags access_flags, vk::PipelineStageFlags input_stage,
+            vk::PipelineStageFlags output_stage, vk::ImageLayout layout) const;
 
     // TODO add_direct_image_access for raw VkImages
     // TODO add_direct_buffer_access for raw VkBuffer
@@ -125,11 +116,35 @@ class queue {
 public:
     queue(device& device, const queue_properties& props = {});
 
+    /// @brief Schedule a render pass
+    /// @tparam F
+    /// @param f
     template<typename F>
-    void schedule(F f) {
-        schedule(typeid(f).name(), f);
+    void render_pass(F f) {
+        schedule(typeid(f).name(), detail::task_type::render_pass, f);
+    }
+    template<typename F>
+    void render_pass(std::string_view name, F f) {
+        schedule(name, detail::task_type::render_pass, f);
     }
 
+    /// @brief Schedule a compute pass
+    /// @tparam F
+    /// @param f
+    template<typename F>
+    void compute_pass(F f) {
+        schedule(typeid(f).name(), detail::task_type::compute_pass, f);
+    }
+    template<typename F>
+    void compute_pass(std::string_view name, F f) {
+        schedule(name, detail::task_type::compute_pass, f);
+    }
+
+    void enqueue_pending_tasks();
+
+    void present(swapchain_image&& image);
+
+private:
     /// @brief
     /// @tparam F
     /// @param f
@@ -139,18 +154,14 @@ public:
     /// (a task might be partially constructed), but no resource is leaked.
     /// In reasonable programs, the callback probably should not throw exceptions.
     template<typename F>
-    void schedule(std::string_view name, F f) {
+    void schedule(std::string_view name, detail::task_type type, F f) {
         // create task
         auto& task = create_task(name);
-        handler h{ *impl_, task };
+        task.type = type;
+        handler h{*impl_, task};
         f(h);
     }
 
-    void enqueue_pending_tasks();
-
-    void present(swapchain_image&& image);
-
-private:
     [[nodiscard]] detail::task& create_task(std::string_view name) noexcept;
 
     std::shared_ptr<detail::queue_impl> impl_;

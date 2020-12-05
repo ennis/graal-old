@@ -752,3 +752,9 @@ depth_attachment{B, attachment_load_op::, attachment_store_op::dont_care };
 	- split scheduling, barrier deduction into several functions, under a common context (schedule_ctx)
 	- interleave liveness analysis with scheduling so that it is correct w.r.t. pipeline usage
 	- submission numbers (SNN)
+	- laid down API for render passes
+30/11 : cross-queue syncs
+ 	- track the current usage of each resource across queues (whether it's used in only one queue or possibly being read across multiple queues simultaneously). This is necessary for the determination of cross-queue syncs.
+	- removed last_write_access. need only last_access and whether the last access was a read or a write
+	- moved resource tracking variables (lastXXX) from resource to an array in schedule_ctx (more tightly-packed in memory). 
+5/12 : submissions

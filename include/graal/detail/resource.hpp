@@ -46,6 +46,7 @@ class resource : public named_object {
 
 public:
     resource(resource_type type) : type_{type} {
+        std::fill(last_access.begin(), last_access.end(), 0);
     }
 
     [[nodiscard]] bool is_virtual() const noexcept {
@@ -56,31 +57,34 @@ public:
         return type_;
     }
 
-    bool allocated = false;  // set to true once bind_memory has been called successfully
-
-    submission_number last_access; // last access serial (read or write)
-    submission_number last_write;  // last write serial
-    vk::ImageLayout last_layout = vk::ImageLayout::eUndefined;            // last known image layout, ignored for buffers
-    vk::AccessFlags last_access_flags = {};
-    vk::PipelineStageFlags last_stage_uses;      
-    vk::Semaphore wait_semaphore =
-            nullptr;  // semaphore to synchronize on before using the resource (updated as the resource is used in a queue)
-    // TODO use a unique_handle pattern to signal ownership. Not the one provided by vulkan-hpp though because
-    // it bundles pointers to the device and allocation infos to allow ad-hoc deletion.
-
     void add_user_ref() const noexcept {
         user_ref_count_.fetch_add(1, std::memory_order_relaxed);
     }
+
+    [[nodiscard]] uint32_t user_ref_count() const noexcept { return user_ref_count_; }
 
     void release_user_ref() const noexcept {
         // relaxed should be sufficient since we're not using the counter for synchronization
         user_ref_count_.fetch_sub(1, std::memory_order_relaxed);
     }
 
-    bool has_user_refs() const noexcept {
+    [[nodiscard]] bool has_user_refs() const noexcept {
         return user_ref_count_.load(std::memory_order_relaxed) != 0;
     }
 
+    bool allocated = false;  // set to true once bind_memory has been called successfully
+
+
+    submission_number last_write;   // submission number of the last write
+    std::array<serial_number, max_queues> last_access;    // serial numbers of the last read accesses for each queue
+
+    vk::ImageLayout last_layout = vk::ImageLayout::eUndefined;            // last known image layout, ignored for buffers
+    vk::AccessFlags last_access_flags = {};
+    vk::PipelineStageFlags last_pipeline_stages;      
+    vk::Semaphore wait_semaphore =
+            nullptr;  // semaphore to synchronize on before using the resource (updated as the resource is used in a queue)
+    // TODO use a unique_handle pattern to signal ownership. Not the one provided by vulkan-hpp though because
+    // it bundles pointers to the device and allocation infos to allow ad-hoc deletion.
 private:
     // For each resource, we maintain an "user reference count" which represents the number of
     // user-facing objects (image<>, buffer<>, etc.) referencing the resource. This is used

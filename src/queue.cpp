@@ -95,19 +95,119 @@ std::string get_object_name(std::size_t index, const named_object& obj) {
     return std::string{obj.name()};
 }
 
+std::string pipeline_stages_to_string_compact(vk::PipelineStageFlags value) {
+    if (!value) return "{}";
+    std::string result;
+    if (value & vk::PipelineStageFlagBits::eTopOfPipe) result += "TOP_OF_PIPE,";
+    if (value & vk::PipelineStageFlagBits::eDrawIndirect) result += "DI,";
+    if (value & vk::PipelineStageFlagBits::eVertexInput) result += "VI,";
+    if (value & vk::PipelineStageFlagBits::eVertexShader) result += "VS,";
+    if (value & vk::PipelineStageFlagBits::eTessellationControlShader) result += "TCS,";
+    if (value & vk::PipelineStageFlagBits::eTessellationEvaluationShader) result += "TES,";
+    if (value & vk::PipelineStageFlagBits::eGeometryShader) result += "GS,";
+    if (value & vk::PipelineStageFlagBits::eFragmentShader) result += "FS,";
+    if (value & vk::PipelineStageFlagBits::eEarlyFragmentTests) result += "EFT,";
+    if (value & vk::PipelineStageFlagBits::eLateFragmentTests) result += "LFT,";
+    if (value & vk::PipelineStageFlagBits::eColorAttachmentOutput) result += "CAO,";
+    if (value & vk::PipelineStageFlagBits::eComputeShader) result += "CS,";
+    if (value & vk::PipelineStageFlagBits::eTransfer) result += "TR,";
+    if (value & vk::PipelineStageFlagBits::eBottomOfPipe) result += "BOTTOM,";
+    if (value & vk::PipelineStageFlagBits::eHost) result += "HST,";
+    if (value & vk::PipelineStageFlagBits::eAllGraphics) result += "ALL_GRAPHICS,";
+    if (value & vk::PipelineStageFlagBits::eAllCommands) result += "ALL_COMMANDS,";
+    if (value & vk::PipelineStageFlagBits::eTransformFeedbackEXT) result += "TF,";
+    if (value & vk::PipelineStageFlagBits::eConditionalRenderingEXT) result += "CR,";
+    if (value & vk::PipelineStageFlagBits::eRayTracingShaderKHR) result += "RTS,";
+    if (value & vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR) result += "ASB,";
+    if (value & vk::PipelineStageFlagBits::eShadingRateImageNV) result += "FSR,";
+    if (value & vk::PipelineStageFlagBits::eTaskShaderNV) result += "TS,";
+    if (value & vk::PipelineStageFlagBits::eMeshShaderNV) result += "MS,";
+    if (value & vk::PipelineStageFlagBits::eFragmentDensityProcessEXT) result += "FDP,";
+    if (value & vk::PipelineStageFlagBits::eCommandPreprocessNV) result += "CPR,";
+    return result.substr(0, result.size() - 1);
+}
+
+std::string access_mask_to_string_compact(vk::AccessFlags value) {
+    if (!value) return "{}";
+    std::string result;
+    if (value & vk::AccessFlagBits::eIndirectCommandRead) result += "ICr,";
+    if (value & vk::AccessFlagBits::eIndexRead) result += "IXr,";
+    if (value & vk::AccessFlagBits::eVertexAttributeRead) result += "VAr";
+    if (value & vk::AccessFlagBits::eUniformRead) result += "Ur,";
+    if (value & vk::AccessFlagBits::eInputAttachmentRead) result += "IAr,";
+    if (value & vk::AccessFlagBits::eShaderRead) result += "SHr,";
+    if (value & vk::AccessFlagBits::eShaderWrite) result += "SHw,";
+    if (value & vk::AccessFlagBits::eColorAttachmentRead) result += "CAr,";
+    if (value & vk::AccessFlagBits::eColorAttachmentWrite) result += "CAw,";
+    if (value & vk::AccessFlagBits::eDepthStencilAttachmentRead) result += "DSAr,";
+    if (value & vk::AccessFlagBits::eDepthStencilAttachmentWrite) result += "DSAw,";
+    if (value & vk::AccessFlagBits::eTransferRead) result += "Tr,";
+    if (value & vk::AccessFlagBits::eTransferWrite) result += "Tw,";
+    if (value & vk::AccessFlagBits::eHostRead) result += "Hr,";
+    if (value & vk::AccessFlagBits::eHostWrite) result += "Hw,";
+    if (value & vk::AccessFlagBits::eMemoryRead) result += "Mr,";
+    if (value & vk::AccessFlagBits::eMemoryWrite) result += "Mw,";
+    if (value & vk::AccessFlagBits::eTransformFeedbackWriteEXT) result += "TFw,";
+    if (value & vk::AccessFlagBits::eTransformFeedbackCounterReadEXT) result += "TFCr,";
+    if (value & vk::AccessFlagBits::eTransformFeedbackCounterWriteEXT) result += "TFCw,";
+    if (value & vk::AccessFlagBits::eConditionalRenderingReadEXT) result += "CRr,";
+    if (value & vk::AccessFlagBits::eColorAttachmentReadNoncoherentEXT) result += "CANCr,";
+    if (value & vk::AccessFlagBits::eAccelerationStructureReadKHR) result += "ASr,";
+    if (value & vk::AccessFlagBits::eAccelerationStructureWriteKHR) result += "ASw,";
+    if (value & vk::AccessFlagBits::eShadingRateImageReadNV) result += "SRIr,";
+    if (value & vk::AccessFlagBits::eFragmentDensityMapReadEXT) result += "FDMr,";
+    if (value & vk::AccessFlagBits::eCommandPreprocessReadNV) result += "CPr,";
+    if (value & vk::AccessFlagBits::eCommandPreprocessWriteNV) result += "CPw,";
+    return result.substr(0, result.size() - 1);
+}
+
+std::string_view layout_to_string_compact(vk::ImageLayout layout) {
+    switch (layout) {
+        case vk::ImageLayout::eUndefined: return "UND";
+        case vk::ImageLayout::eGeneral: return "GEN";
+        case vk::ImageLayout::eColorAttachmentOptimal: return "CA";
+        case vk::ImageLayout::eDepthStencilAttachmentOptimal: return "DSA";
+        case vk::ImageLayout::eDepthStencilReadOnlyOptimal: return "DSRO";
+        case vk::ImageLayout::eShaderReadOnlyOptimal: return "SHRO";
+        case vk::ImageLayout::eTransferSrcOptimal: return "TSRC";
+        case vk::ImageLayout::eTransferDstOptimal: return "TDST";
+        case vk::ImageLayout::ePreinitialized: return "PREINIT";
+        case vk::ImageLayout::eDepthReadOnlyStencilAttachmentOptimal: return "DROSA";
+        case vk::ImageLayout::eDepthAttachmentStencilReadOnlyOptimal: return "DASRO";
+        case vk::ImageLayout::eDepthAttachmentOptimal: return "DA";
+        case vk::ImageLayout::eDepthReadOnlyOptimal: return "DRO";
+        case vk::ImageLayout::eStencilAttachmentOptimal: return "SAO";
+        case vk::ImageLayout::eStencilReadOnlyOptimal: return "SRO";
+        case vk::ImageLayout::ePresentSrcKHR: return "PR";
+        case vk::ImageLayout::eSharedPresentKHR: return "SPR";
+        case vk::ImageLayout::eShadingRateOptimalNV: return "SR";
+        case vk::ImageLayout::eFragmentDensityMapOptimalEXT: return "FDM";
+        default: return "<invalid>";
+    }
+}
+
 using variable_set = boost::dynamic_bitset<uint64_t>;
-void dump_tasks(std::ostream& out, std::span<const task> tasks,
-        std::span<const temporary> temporaries, std::span<const variable_set> live_sets) {
+void dump_tasks(
+        std::ostream& out, std::span<const task> tasks, std::span<const temporary> temporaries) {
     out << "digraph G {\n";
     out << "node [shape=record fontname=Consolas];\n";
 
     for (task_index index = 0; index < tasks.size(); ++index) {
         const auto& task = tasks[index];
 
-        out << "t_" << index << " [shape=record label=\"{";
-        out << index;
-        if (!task.name.empty()) { out << "(" << task.name << ")"; }
-        out << "|{{reads\\l|writes\\l|live\\l}|{";
+        out << "t_" << index << " [shape=record style=filled fillcolor=\"";
+        switch (task.snn.queue) {
+            case 0: out << "#ffff99"; break;
+            case 1: out << "#7fc97f"; break;
+            case 2: out << "#fdc086"; break;
+            case 3:
+            default: out << "#beaed4"; break;
+        }
+
+        out << "\" label=\"{";
+        out << task.name;
+        out << "|sn=" << task.snn.serial << "(q=" << task.snn.queue << ")";
+        out << "\\lreads=";
         {
             bool first = true;
             for (const auto& a : task.accesses) {
@@ -118,11 +218,11 @@ void dump_tasks(std::ostream& out, std::span<const task> tasks,
                         first = false;
                     }
                     out << get_object_name(a.index, *temporaries[a.index].resource);
-                    //out << "\\[" << to_string(a.details.access_flags) << "\\]";
+                    out << "(" << access_mask_to_string_compact(a.details.access_flags) << ")";
                 }
             }
         }
-        out << "\\l|";
+        out << "\\lwrites=";
         {
             bool first = true;
             for (const auto& a : task.accesses) {
@@ -133,27 +233,11 @@ void dump_tasks(std::ostream& out, std::span<const task> tasks,
                         first = false;
                     }
                     out << get_object_name(a.index, *temporaries[a.index].resource);
-                    //out << "\\[" << to_string(a.details.access_flags) << "\\]";
+                    out << "(" << access_mask_to_string_compact(a.details.access_flags) << ")";
                 }
             }
         }
-        out << "\\l|";
-
-        {
-            bool first = true;
-            for (size_t t = 0; t < temporaries.size(); ++t) {
-                if (live_sets[index].test(t)) {
-                    if (!first) {
-                        out << ",";
-                    } else {
-                        first = false;
-                    }
-                    out << get_object_name(t, *temporaries[t].resource);
-                }
-            }
-        }
-
-        out << "\\l}}}\"]\n";
+        out << "}\"]\n";
     }
 
     for (task_index i = 0; i < tasks.size(); ++i) {
@@ -429,10 +513,6 @@ allocate_batch_memory_results allocate_batch_memory(device_impl_ptr device, seri
                     }*/
 
     // dump task graph with live-variable analysis to a graphviz file
-    {
-        std::ofstream out_graphviz{fmt::format("graal_test_{}.dot", start_sn), std::ios::trunc};
-        dump_tasks(out_graphviz, tasks, temporaries, live_sets);
-    }
 #endif
     return {};
 }
@@ -490,14 +570,14 @@ struct pipeline_state {
     static constexpr auto FS = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
     static constexpr auto LFT = VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
     static constexpr auto CAO = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    static constexpr auto CS = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
     static constexpr auto FDP = VK_PIPELINE_STAGE_FRAGMENT_DENSITY_PROCESS_BIT_EXT;
+    static constexpr auto CS = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
     static constexpr auto RTS = VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR;
+    static constexpr auto HST = VK_PIPELINE_STAGE_HOST_BIT;
+    static constexpr auto CPR = VK_PIPELINE_STAGE_COMMAND_PREPROCESS_BIT_NV;
     static constexpr auto ASB = VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
     static constexpr auto TR = VK_PIPELINE_STAGE_TRANSFER_BIT;
     static constexpr auto CR = VK_PIPELINE_STAGE_CONDITIONAL_RENDERING_BIT_EXT;
-    static constexpr auto HST = VK_PIPELINE_STAGE_HOST_BIT;
-    static constexpr auto CPR = VK_PIPELINE_STAGE_COMMAND_PREPROCESS_BIT_NV;
     static constexpr auto ALL_COMMANDS = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
     static constexpr auto ALL_GRAPHICS = VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT;
     static constexpr auto BOTTOM_OF_PIPE = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
@@ -681,9 +761,9 @@ static void dump_batch(batch& b) {
     fmt::print("Temporaries:\n");
     size_t tmp_index = 0;
     for (const auto& tmp : b.temporaries) {
-        fmt::print(" - #{}: {} discarded={} last_write={}\n", tmp_index++,
+        fmt::print(" - #{}: {} user_ref_count={} last_write={}\n", tmp_index++,
                 tmp.resource->name().empty() ? "<unnamed>" : tmp.resource->name(),
-                tmp.resource->has_user_refs(), tmp.last_write);
+                tmp.resource->user_ref_count(), tmp.last_write);
     }
 
     fmt::print("Tasks:\n");
@@ -724,6 +804,12 @@ static void dump_batch(batch& b) {
         }
         task_index++;
     }
+
+    {
+        std::ofstream out_graphviz{
+                fmt::format("graal_test_{}.dot", b.start_serial), std::ios::trunc};
+        dump_tasks(out_graphviz, b.tasks, b.temporaries);
+    }
 }
 
 //-----------------------------------------------------------------------------
@@ -752,7 +838,7 @@ public:
         auto& task = batch_.tasks.back();
         last_serial_++;
         task.name = name;
-        task.snn.serial = last_serial_; // temporary SNN for DAG creation
+        task.snn.serial = last_serial_;  // temporary SNN for DAG creation
         return task;
     }
 
@@ -877,87 +963,6 @@ const task* queue_impl::get_unsubmitted_task(uint64_t sequence_number) const noe
     return nullptr;
 }
 
-/// @brief Handles a memory dependency on a resource.
-/// @param resource the resource
-/// @param access how the resource is accessed in the task
-/// @param sn task serial number
-/// @param pstate known pipeline state
-/// @param src_stage_flags source pipeline barrier stages
-/// @param dst_stage_flags destination pipeline barrier stages
-///
-/// This function updates the required src_stage_flags and dst_stage_flags of pipeline barrier.
-/// It also updates the pipeline state with
-static void memory_dependency(resource& resource, const resource_access_details& access,
-        submission_number snn, const pipeline_state& pstate, vk::PipelineStageFlags& src_stage_flags,
-        vk::PipelineStageFlags& dst_stage_flags) 
-{
-    const bool writing = is_write_access(access.access_flags);
-    const bool reading = is_read_access(access.access_flags);
-
-    //assert(resource.last_write_serial < sn);
-
-    bool needs_barrier = false;
-    if (writing || access.layout != resource.last_layout) {
-        // writing or layout transition: possible write-after-read hazard
-        // execution dependency w.r.t. last access
-        needs_barrier |=
-                pstate.needs_execution_barrier(resource.last_access.serial, resource.last_stage_uses);
-    }
-    else {
-        // reading, same layout: execution dependency w.r.t. last write to resource
-        bool needs_barrier =
-            pstate.needs_execution_barrier(resource.last_write.serial, resource.last_stage_uses);
-    }
-
-    if (needs_barrier) {
-        // insert execution barrier:
-        // resource.last_stage_uses -> access.details.stage
-        src_stage_flags |= resource.last_stage_uses;
-        dst_stage_flags |= access.input_stage;
-    }
-
-    // is a memory barrier necessary for this access?
-
-    // yes, if layout is different
-    const bool needs_layout_transition = resource.last_layout != access.layout;
-    // covers RAW hazards, and visibility acess different access types
-    const bool visibility_hazard =
-            (resource.last_access_flags & access.access_flags) != access.access_flags;
-    // covers WAW hazards across the same access type (writes must happen in order)
-    const bool waw_hazard = writing && is_write_access(resource.last_access_flags);
-
-    if (needs_layout_transition || visibility_hazard || waw_hazard) {
-        if (resource.type() == resource_type::image
-                || resource.type() == resource_type::swapchain_image) {
-            fmt::print("image barrier #{} {},{} -> {},{}\n", resource.name(),
-                    to_string(resource.last_layout), to_string(resource.last_access_flags),
-                    to_string(access.layout), to_string(access.access_flags));
-        } else if (resource.type() == resource_type::buffer) {
-            fmt::print("buffer barrier #{} {} -> {}\n", resource.name(),
-                    to_string(resource.last_access_flags), to_string(access.access_flags));
-        }
-    }
-
-    resource.last_layout = access.layout;
-    resource.last_stage_uses = access.output_stage;
-
-    if (writing || needs_layout_transition) {
-        // The resource is modified, either through an actual write or a layout transition.
-        // The last version of the contents is visible only for the access flags given in this task.
-        resource.last_access_flags = access.access_flags;
-    } else {
-        // Read-only access, a barrier has been inserted so that all writes to the resource are visible.
-        // Combine with the previous access flags.
-        resource.last_access_flags |= access.access_flags;
-    }
-
-    // update access serials
-    if (writing) {
-        resource.last_write = snn;
-    } 
-    resource.last_access = snn;
-}    
-
 struct ready_task {
     size_t latest_pred_serial;
     size_t index;
@@ -970,7 +975,7 @@ struct ready_task {
 };
 
 using task_priority_queue =
-std::priority_queue<ready_task, std::vector<ready_task>, ready_task::compare>;
+        std::priority_queue<ready_task, std::vector<ready_task>, ready_task::compare>;
 
 static void dump_set(variable_set s) {
     bool first = true;
@@ -991,18 +996,74 @@ static void dump_set(variable_set s) {
     }
 }
 
+struct resource_state {
+    std::array<serial_number, max_queues> access_sn;  // last access SN
+    submission_number write_snn;  // last write SN
+    vk::ImageLayout layout =
+            vk::ImageLayout::eUndefined;  // last known image layout, ignored for buffers
+    vk::AccessFlags access_flags = {};
+    vk::PipelineStageFlags stages;
+};
+
+struct image_memory_barrier {
+    size_t resource_index;
+    vk::AccessFlags src_access_mask;
+    vk::AccessFlags dst_access_mask;
+    vk::ImageLayout old_layout;
+    vk::ImageLayout new_layout;
+};
+
+struct buffer_memory_barrier {
+    size_t resource_index;
+    vk::AccessFlags src_access_mask;
+    vk::AccessFlags dst_access_mask;
+};
+
+/// @brief Represents a queue submission (call to vkQueueSubmit)
+struct queue_submit {
+    std::array<serial_number, max_queues> wait_sn{};
+    std::array<vk::PipelineStageFlags, max_queues> wait_dst_stages{};
+    serial_number first_sn;
+    submission_number signal_snn;
+    size_t cb_offset = 0;
+    size_t cb_count = 0;
+};
+
+struct submitted_task {
+    vk::PipelineStageFlags src_stage_mask;
+    vk::PipelineStageFlags dst_stage_mask;
+    size_t cb_index;
+    size_t num_image_memory_barriers;
+    const vk::ImageMemoryBarrier* image_memory_barriers;
+    size_t num_buffer_memory_barriers;
+    const vk::BufferMemoryBarrier* buffer_memory_barriers;
+};
+
+struct device_memory_allocation {
+    allocation_flags flags;
+    uint32_t memory_type_bits;
+    size_t size;
+    size_t alignment;
+    VmaAllocation allocation;
+};
+
 struct schedule_ctx {
     device_impl_ptr device;
     queue_indices queues;
-    variable_set submitted_tasks;  // set of submitted tasks
-    variable_set ready_tasks;  // set of tasks ready to be submitted   
+    variable_set done_tasks;  // set of submitted tasks
+    variable_set ready_tasks;  // set of tasks ready to be submitted
     task_priority_queue ready_queue;  // queue of tasks ready to be submitted
-    serial_number next_sn;      // serial number of the next task to be scheduled
+    serial_number base_sn;
+    serial_number next_sn;  // serial number of the next task to be scheduled
     std::span<task> tasks;
     std::span<temporary> temporaries;
-    pipeline_state pstate[max_queues];
 
-    std::vector<variable_set> reachability; // reachability matrix [to][from]
+    // --- pipeline & resource state tracking
+    pipeline_state pstate[max_queues];
+    std::vector<resource_state> rstate;
+
+    // --- liveness
+    std::vector<variable_set> reachability;  // reachability matrix [to][from]
     std::vector<variable_set> live_sets;  // live-sets for each task
     std::vector<variable_set> use_sets;  // use-sets for each task
     std::vector<variable_set> def_sets;  // def-sets for each task
@@ -1013,22 +1074,45 @@ struct schedule_ctx {
     variable_set mask;  // auxiliary set
     variable_set tmp;  //
 
+    // --- device memory allocations
+    std::vector<device_memory_allocation> allocations;
+    std::vector<size_t> allocation_map; // tmp index -> allocations
 
-    schedule_ctx(
-        queue_indices queues, 
-        serial_number base_sn,
-        std::span<task> tasks, 
-        std::span<temporary> temporaries) : 
-        queues{ queues },
-        next_sn{ base_sn },
-        tasks{ tasks },
-        temporaries{temporaries}
-    {
+
+    // memory_dependency state for the task being submitted
+    std::vector<buffer_memory_barrier> current_buffer_memory_barriers;
+    std::vector<image_memory_barrier> current_image_memory_barriers;
+    std::vector<submission_number> current_queue_syncs;
+
+    // --- submits
+    std::array<queue_submit, max_queues> pending_submits{};
+    std::vector<queue_submit> submits;
+    std::vector<submitted_task> submitted_tasks;
+    //std::vector<size_t> cb_index_map;
+    size_t next_cb_index = 0;
+    std::vector<image_memory_barrier> image_memory_barriers;
+    std::vector<buffer_memory_barrier> buffer_memory_barriers;
+
+    schedule_ctx(queue_indices queues, serial_number base_sn, std::span<task> tasks,
+            std::span<temporary> temporaries) :
+        queues{queues},
+        base_sn{base_sn}, next_sn{base_sn}, tasks{tasks}, temporaries{temporaries} {
         const auto n_task = tasks.size();
         const auto n_tmp = temporaries.size();
         reachability = transitive_closure(tasks);
-        submitted_tasks.resize(n_task, false);
+        done_tasks.resize(n_task, false);
         ready_tasks.resize(n_task, false);
+        submitted_tasks.resize(n_task);
+
+        rstate.reserve(n_tmp);
+        for (size_t i = 0; i < n_tmp; ++i) {
+            const resource& r = *temporaries[i].resource;
+            rstate.push_back(resource_state{.access_sn = r.last_access,
+                    .layout = r.last_layout,
+                    .access_flags = r.last_access_flags,
+                    .stages = r.last_pipeline_stages});
+        }
+
         live.resize(n_tmp);
         dead.resize(n_tmp);
         gen.resize(n_tmp);
@@ -1051,74 +1135,266 @@ struct schedule_ctx {
         }
     }
 
-    /*/// @brief Assigns a memory block for the given temporary, 
-    /// possibly aliasing with a temporary that can be proven dead in the current scheduling state.
-    /// @param tmp_index the index of the temporary to assign a memory block to
-    void assign_device_memory(size_t tmp_index) 
+    void dump() {
+        fmt::print("Scheduling state dump:\nnext_sn={}\n", next_sn);
+        fmt::print("Pipeline:\n");
+        fmt::print("{:4d} {:4d} {:4d} {:4d} | DRAW_INDIRECT\n",
+                pstate[0].stages[pipeline_state::i_DI], pstate[1].stages[pipeline_state::i_DI],
+                pstate[2].stages[pipeline_state::i_DI], pstate[3].stages[pipeline_state::i_DI]);
+        fmt::print("{:4d} {:4d} {:4d} {:4d} | VERTEX_INPUT\n",
+                pstate[0].stages[pipeline_state::i_VI], pstate[1].stages[pipeline_state::i_VI],
+                pstate[2].stages[pipeline_state::i_VI], pstate[3].stages[pipeline_state::i_VI]);
+        fmt::print("{:4d} {:4d} {:4d} {:4d} | VERTEX_SHADER\n",
+                pstate[0].stages[pipeline_state::i_VS], pstate[1].stages[pipeline_state::i_VS],
+                pstate[2].stages[pipeline_state::i_VS], pstate[3].stages[pipeline_state::i_VS]);
+        fmt::print("{:4d} {:4d} {:4d} {:4d} | TESSELLATION_CONTROL_SHADER\n",
+                pstate[0].stages[pipeline_state::i_TCS], pstate[1].stages[pipeline_state::i_TCS],
+                pstate[2].stages[pipeline_state::i_TCS], pstate[3].stages[pipeline_state::i_TCS]);
+        fmt::print("{:4d} {:4d} {:4d} {:4d} | TESSELLATION_EVALUATION_SHADER\n",
+                pstate[0].stages[pipeline_state::i_TES], pstate[1].stages[pipeline_state::i_TES],
+                pstate[2].stages[pipeline_state::i_TES], pstate[3].stages[pipeline_state::i_TES]);
+        fmt::print("{:4d} {:4d} {:4d} {:4d} | GEOMETRY_SHADER\n",
+                pstate[0].stages[pipeline_state::i_GS], pstate[1].stages[pipeline_state::i_GS],
+                pstate[2].stages[pipeline_state::i_GS], pstate[3].stages[pipeline_state::i_GS]);
+        fmt::print("{:4d} {:4d} {:4d} {:4d} | TRANSFORM_FEEDBACK_EXT\n",
+                pstate[0].stages[pipeline_state::i_TF], pstate[1].stages[pipeline_state::i_TF],
+                pstate[2].stages[pipeline_state::i_TF], pstate[3].stages[pipeline_state::i_TF]);
+        fmt::print("{:4d} {:4d} {:4d} {:4d} | TASK_SHADER_NV\n",
+                pstate[0].stages[pipeline_state::i_TS], pstate[1].stages[pipeline_state::i_TS],
+                pstate[2].stages[pipeline_state::i_TS], pstate[3].stages[pipeline_state::i_TS]);
+        fmt::print("{:4d} {:4d} {:4d} {:4d} | MESH_SHADER_NV\n",
+                pstate[0].stages[pipeline_state::i_MS], pstate[1].stages[pipeline_state::i_MS],
+                pstate[2].stages[pipeline_state::i_MS], pstate[3].stages[pipeline_state::i_MS]);
+        fmt::print("{:4d} {:4d} {:4d} {:4d} | SHADING_RATE_IMAGE_NV\n",
+                pstate[0].stages[pipeline_state::i_FSR], pstate[1].stages[pipeline_state::i_FSR],
+                pstate[2].stages[pipeline_state::i_FSR], pstate[3].stages[pipeline_state::i_FSR]);
+        fmt::print("{:4d} {:4d} {:4d} {:4d} | EARLY_FRAGMENT_TESTS\n",
+                pstate[0].stages[pipeline_state::i_EFT], pstate[1].stages[pipeline_state::i_EFT],
+                pstate[2].stages[pipeline_state::i_EFT], pstate[3].stages[pipeline_state::i_EFT]);
+        fmt::print("{:4d} {:4d} {:4d} {:4d} | FRAGMENT_SHADER\n",
+                pstate[0].stages[pipeline_state::i_FS], pstate[1].stages[pipeline_state::i_FS],
+                pstate[2].stages[pipeline_state::i_FS], pstate[3].stages[pipeline_state::i_FS]);
+        fmt::print("{:4d} {:4d} {:4d} {:4d} | LATE_FRAGMENT_TESTS\n",
+                pstate[0].stages[pipeline_state::i_LFT], pstate[1].stages[pipeline_state::i_LFT],
+                pstate[2].stages[pipeline_state::i_LFT], pstate[3].stages[pipeline_state::i_LFT]);
+        fmt::print("{:4d} {:4d} {:4d} {:4d} | COLOR_ATTACHMENT_OUTPUT\n",
+                pstate[0].stages[pipeline_state::i_CAO], pstate[1].stages[pipeline_state::i_CAO],
+                pstate[2].stages[pipeline_state::i_CAO], pstate[3].stages[pipeline_state::i_CAO]);
+        fmt::print("{:4d} {:4d} {:4d} {:4d} | FRAGMENT_DENSITY_PROCESS_EXT\n",
+                pstate[0].stages[pipeline_state::i_FDP], pstate[1].stages[pipeline_state::i_FDP],
+                pstate[2].stages[pipeline_state::i_FDP], pstate[3].stages[pipeline_state::i_FDP]);
+        fmt::print("{:4d} {:4d} {:4d} {:4d} | COMPUTE_SHADER\n",
+                pstate[0].stages[pipeline_state::i_CS], pstate[1].stages[pipeline_state::i_CS],
+                pstate[2].stages[pipeline_state::i_CS], pstate[3].stages[pipeline_state::i_CS]);
+        fmt::print("{:4d} {:4d} {:4d} {:4d} | RAY_TRACING_SHADER_KHR\n",
+                pstate[0].stages[pipeline_state::i_RTS], pstate[1].stages[pipeline_state::i_RTS],
+                pstate[2].stages[pipeline_state::i_RTS], pstate[3].stages[pipeline_state::i_RTS]);
+        fmt::print("{:4d} {:4d} {:4d} {:4d} | HOST\n", pstate[0].stages[pipeline_state::i_HST],
+                pstate[1].stages[pipeline_state::i_HST], pstate[2].stages[pipeline_state::i_HST],
+                pstate[3].stages[pipeline_state::i_HST]);
+        fmt::print("{:4d} {:4d} {:4d} {:4d} | COMMAND_PREPROCESS_NV\n",
+                pstate[0].stages[pipeline_state::i_CPR], pstate[1].stages[pipeline_state::i_CPR],
+                pstate[2].stages[pipeline_state::i_CPR], pstate[3].stages[pipeline_state::i_CPR]);
+        fmt::print("{:4d} {:4d} {:4d} {:4d} | ACCELERATION_STRUCTURE_BUILD_KHR\n",
+                pstate[0].stages[pipeline_state::i_ASB], pstate[1].stages[pipeline_state::i_ASB],
+                pstate[2].stages[pipeline_state::i_ASB], pstate[3].stages[pipeline_state::i_ASB]);
+        fmt::print("{:4d} {:4d} {:4d} {:4d} | TRANSFER\n", pstate[0].stages[pipeline_state::i_TR],
+                pstate[1].stages[pipeline_state::i_TR], pstate[2].stages[pipeline_state::i_TR],
+                pstate[3].stages[pipeline_state::i_TR]);
+        fmt::print("{:4d} {:4d} {:4d} {:4d} | CONDITIONAL_RENDERING_EXT\n",
+                pstate[0].stages[pipeline_state::i_CR], pstate[1].stages[pipeline_state::i_CR],
+                pstate[2].stages[pipeline_state::i_CR], pstate[3].stages[pipeline_state::i_CR]);
+        fmt::print("Resources:\n");
+        for (size_t i = 0; i < temporaries.size(); ++i) {
+            fmt::print("{:<10} {} W={}:{} A={},{},{},{} L={} AM={} S={}\n",
+                    temporaries[i].resource->name(), live[i] ? "live" : "dead",
+                    (uint64_t) rstate[i].write_snn.queue, (uint64_t) rstate[i].write_snn.serial,
+                    (uint64_t) rstate[i].access_sn[0], (uint64_t) rstate[i].access_sn[1],
+                    (uint64_t) rstate[i].access_sn[2], (uint64_t) rstate[i].access_sn[3],
+                    layout_to_string_compact(rstate[i].layout),
+                    access_mask_to_string_compact(rstate[i].access_flags),
+                    pipeline_stages_to_string_compact(rstate[i].stages));
+        }
+        fmt::print("\n");
+    }
+
+   /// @brief Assigns a memory block for the given temporary,
+   /// possibly aliasing with a temporary that can be proven dead in the current scheduling state.
+   /// @param tmp_index the index of the temporary to assign a memory block to
+   void assign_device_memory(size_t tmp_index)
+   {
+       auto allocator = device->get_allocator();
+       auto& tmp0 = temporaries[tmp_index].resource;
+
+       // skip if it doesn't need allocation
+       if (!tmp0->is_virtual()) return;
+       if (tmp0->allocated) return;
+
+       virtual_resource& vres = static_cast<virtual_resource&>(*tmp0);
+       const auto requirements = vres.get_allocation_requirements(device);
+
+       // resource became alive, if possible, alias with a dead
+       // temporary, otherwise allocate a new one.
+
+       if (!(requirements.flags & allocation_flag::aliasable))
+       {
+           device_memory_allocation alloc{
+               .memory_type_bits = requirements.memory_type_bits,
+               .alignment = requirements.alignment,
+           }
+           allocations.push_back(requirements);
+           allocation_map.push_back(allocations.size() - 1);
+       }
+       else {
+           // whether we managed to find a dead resource to alias with
+           bool aliased = false;
+           for (size_t t1 = 0; t1 < temporaries.size(); ++t1) {
+               // filter out live resources
+               if (!dead[t1]) continue;
+
+               auto i_alloc = allocation_map[t1];
+               auto& dead_requirements = allocations[i_alloc];
+
+               if (adjust_allocation_requirements(
+                   dead_alloc_requirements, requirements)) {
+                   // the two resources may alias; the requirements
+                   // have been adjusted
+                   alloc_map[t0] = i_alloc;
+                   // not dead anymore
+                   dead[t1] = false;
+                   aliased = true;
+                   break;
+               }
+
+               // otherwise continue
+           }
+
+           // no aliasing opportunities
+           if (!aliased) {
+               // new allocation
+               allocations.push_back(alloc_requirements);
+               alloc_map[t0] = allocations.size() - 1;
+           }
+       }
+   }
+
+    /// @brief Handles a memory dependency on a resource.
+    /// @param resource the resource
+    /// @param access how the resource is accessed in the task
+    /// @param sn task serial number
+    /// @param pstate known pipeline state
+    /// @param src_stage_flags (output) source pipeline barrier stages
+    /// @param dst_stage_flags (output) destination pipeline barrier stages
+    /// @param queue_syncs (output) submission numbers to wait for; if it is not empty, then
+    /// a semaphore wait must happen (corresponds to a vkQueueSubmit)
+    ///
+    /// This function updates the required src_stage_flags and dst_stage_flags of pipeline barrier.
+    /// It also updates the `current_buffer_memory_barriers`, `current_image_memory_barriers` and `current_queue_syncs` members
+    /// by appending the necessary memory barriers.
+    void memory_dependency(
+        size_t resource_index,
+        const resource_access_details& access,
+        submission_number snn, 
+        std::array<serial_number, max_queues>& queue_syncs,
+            std::array<vk::PipelineStageFlags, max_queues>& queue_syncs_wait_dst_stages,
+            vk::PipelineStageFlags& src_stage_flags, 
+        vk::PipelineStageFlags& dst_stage_flags) 
     {
-        auto& tmp0 = temporaries[tmp_index].resource;
+        auto& r = rstate[resource_index];
+        const bool writing = is_write_access(access.access_flags) || access.layout != r.layout;
+        const bool reading = is_read_access(access.access_flags);
 
-        // skip if it doesn't need allocation
-        if (!tmp0->is_virtual()) return;
-        if (tmp0->allocated) return;
+        // TODO ensure that the resource is allocated
 
-        auto alloc_requirements =
-            static_cast<virtual_resource&>(*tmp0).get_allocation_requirements(device);
+        // --- is an execution barrier necessary for this access?
 
-        // resource became alive, if possible, alias with a dead
-        // temporary, otherwise allocate a new one.
-
-        if (!(alloc_requirements.flags & allocation_flag::aliasable)) {
-            // resource not aliasable, because it was explicitly
-            // requested to be not aliasable, or because there's still
-            // an external handle to it.
-            allocations.push_back(alloc_requirements);
-            alloc_map.push_back(allocations.size() - 1);
+        if (writing) {
+            for (size_t iq = 0; iq < max_queues; ++iq) {
+                // WA* hazard: need queue sync w.r.t. last accesses across ALL queues
+                queue_syncs[iq] = std::max(queue_syncs[iq], r.access_sn[iq]);
+                queue_syncs_wait_dst_stages[iq] |= access.input_stage;
+            }
+        } else {
+            // RAW hazard: need queue sync w.r.t last write
+            queue_syncs[r.write_snn.queue] =
+                    std::max(queue_syncs[r.write_snn.queue], r.write_snn.serial);
+            queue_syncs_wait_dst_stages[r.write_snn.queue] |= access.input_stage;
         }
-        else {
-            // whether we managed to find a dead resource to alias with
-            bool aliased = false;
-            for (size_t t1 = 0; t1 < n_tmp; ++t1) {
-                // filter out live resources
-                if (!dead[t1]) continue;
 
-                auto i_alloc = alloc_map[t1];
-                auto& dead_alloc_requirements = allocations[i_alloc];
+        src_stage_flags |= r.stages;
+        dst_stage_flags |= access.input_stage;
 
-                if (adjust_allocation_requirements(
-                    dead_alloc_requirements, alloc_requirements)) {
-                    // the two resources may alias; the requirements
-                    // have been adjusted
-                    alloc_map[t0] = i_alloc;
-                    // not dead anymore
-                    dead[t1] = false;
-                    aliased = true;
-                    break;
+        // --- is a memory barrier necessary for this access?
+        const bool needs_layout_transition =
+                r.layout != access.layout;  // yes, if layout is different
+        const bool visibility_hazard =
+                (r.access_flags & access.access_flags)
+                != access.access_flags;  // covers RAW hazards, and visibility across different access types
+        const bool waw_hazard =
+                writing
+                && is_write_access(
+                        r.access_flags);  // covers WAW hazards across the same access type (writes must happen in order)
+
+        if (needs_layout_transition || visibility_hazard || waw_hazard) {
+            const auto& resource = *temporaries[resource_index].resource;
+            if (resource.type() == resource_type::image
+                    || resource.type() == resource_type::swapchain_image) {
+                current_image_memory_barriers.push_back(image_memory_barrier{
+                        .resource_index = resource_index,
+                        .src_access_mask = r.access_flags,
+                        .dst_access_mask = access.access_flags,
+                        .old_layout = r.layout,
+                        .new_layout = access.layout,
+                });
+                /*fmt::print("image barrier #{} {},{} -> {},{}\n", resource.name(),
+                        to_string(r.layout), to_string(r.access_flags), to_string(access.layout),
+                        to_string(access.access_flags));*/
+            } else if (resource.type() == resource_type::buffer) {
+                current_buffer_memory_barriers.push_back(buffer_memory_barrier{
+                        .resource_index = resource_index,
+                        .src_access_mask = r.access_flags,
+                        .dst_access_mask = access.access_flags,
+                });
+                /*fmt::print("buffer barrier #{} {} -> {}\n", resource.name(),
+                        to_string(r.access_flags), to_string(access.access_flags));*/
+            }
+        }
+
+        // --- update what we know about the resource after applying the barriers
+        r.layout = access.layout;
+        r.stages = access.output_stage;
+        if (writing) {
+            // The resource is modified, either through an actual write or a layout transition.
+            // The last version of the contents is visible only for the access flags given in this task.
+            r.write_snn = snn;
+            for (size_t iq = 0; iq < max_queues; ++iq) {
+                if (iq == snn.queue) {
+                    r.access_sn[iq] = snn.serial;
+                } else {
+                    r.access_sn[iq] = 0;
                 }
-
-                // otherwise continue
             }
-
-            // no aliasing opportunities
-            if (!aliased) {
-                // new allocation
-                allocations.push_back(alloc_requirements);
-                alloc_map[t0] = allocations.size() - 1;
-            }
+            r.access_flags = access.access_flags;
+        } else {
+            // Read-only access, a barrier has been inserted so that all writes to the resource are visible.
+            // Combine with the previous access flags.
+            r.access_sn[snn.queue] = snn.serial;
+            r.access_flags |= access.access_flags;
         }
-    }*/
+    }
 
+   
 
     void update_liveness(size_t task_index) {
         // update live/dead sets
-        // 
+        //
         // a resource becomes live if it wasn't live before and it's used in this task (use or def).
-        // a resource becomes dead if 
-        // - it was live before 
+        // a resource becomes dead if
+        // - it was live before
         // - it's not used in any task that isn't a predecessor of the current task (no use between defs)
-        // - we know, because of previous execution barriers, that all pipeline stages accessing the resource have finished 
+        // - we know, because of previous execution barriers, that all pipeline stages accessing the resource have finished
         //      - NOTE: never insert a barrier just to improve aliasing
-         // determine the resources live before this task
+        // determine the resources live before this task
         const auto& t = tasks[task_index];
         const auto n_task = tasks.size();
         const auto n_tmp = temporaries.size();
@@ -1130,15 +1406,15 @@ struct schedule_ctx {
 
         // determine the resources that come alive in this task (
         gen.reset();
-        gen |= use_sets[task_index]; // "use" == read access
-        gen |= def_sets[task_index]; // "def" == write access
-        gen -= live;    // exclude those that were already live
+        gen |= use_sets[task_index];  // "use" == read access
+        gen |= def_sets[task_index];  // "def" == write access
+        gen -= live;  // exclude those that were already live
 
         // add uses & defs to the live set
         live |= use_sets[task_index];
         live |= def_sets[task_index];
 
-        // initialize kill set to all live temps, and progressively remove 
+        // initialize kill set to all live temps, and progressively remove
         kill = live;
         // don't kill defs and uses of the current task
         kill -= use_sets[task_index];
@@ -1148,7 +1424,8 @@ struct schedule_ctx {
 
         // kill set calculation: remove temps accessed in parallel branches
         for (size_t j = 0; j < n_task; ++j) {
-            if (j == task_index || reachability[j][task_index] || reachability[task_index][j]) continue;
+            if (j == task_index || reachability[j][task_index] || reachability[task_index][j])
+                continue;
             kill -= use_sets[j];
             kill -= def_sets[j];
         }
@@ -1177,10 +1454,18 @@ struct schedule_ctx {
         // now ensure that all pipeline stages have finished accessing the potentially killed resource
         for (size_t i = 0; i < n_tmp; ++i) {
             if (!kill[i]) continue;
-            const auto& resource = *temporaries[i].resource;
-
-            if (pstate[resource.last_access.queue].needs_execution_barrier(resource.last_access.serial, resource.last_stage_uses)) {
-                kill.reset(i);  // execution barrier needed, cannot ensure that the resource is dead
+            const auto& rs = rstate[i];
+            // XXX what about queues here?
+            // actually, if the resource was accessed in a different queue(s),
+            // then there must be an execution dependency between the current task and all other queues
+            for (size_t iq = 0; iq < max_queues; ++iq) {
+                if (rs.access_sn[iq]) {
+                    if (pstate[iq].needs_execution_barrier(rs.access_sn[iq], rs.stages)) {
+                        // can't prove that the queue has finished accessing the resource, can't consider it dead
+                        kill.reset(i);
+                        break;
+                    }
+                }
             }
         }
 
@@ -1191,27 +1476,26 @@ struct schedule_ctx {
         live -= kill;
         live_sets[task_index] = live;
 
-        fmt::print("LIVE:");
+        /*fmt::print("LIVE:");
         dump_set(live);
         fmt::print(" | GEN:");
         dump_set(gen);
         fmt::print(" | KILL:");
         dump_set(kill);
-        fmt::print("\n");
-    }  
+        fmt::print("\n");*/
+    }
 
     /// @brief builds set of tasks ready to be submitted
-    /// @return 
-    void update_ready_queue()
-    {
+    /// @return
+    void update_ready_queue() {
         const auto n_task = tasks.size();
 
         for (size_t i = 0; i < n_task; ++i) {
             const auto& t = tasks[i];
-            if (submitted_tasks[i] || ready_tasks[i]) continue;
+            if (done_tasks[i] || ready_tasks[i]) continue;
 
             if (t.preds.size() == 0 || std::all_of(t.preds.begin(), t.preds.end(), [&](size_t i) {
-                return submitted_tasks[i];
+                    return done_tasks[i];
                 })) {
                 // 1. max overlap
                 size_t latest_pred_serial = 0;
@@ -1220,19 +1504,17 @@ struct schedule_ctx {
                 }
 
                 ready_tasks.set(i);
-                ready_queue.push(ready_task{ .latest_pred_serial = latest_pred_serial, .index = i });
+                ready_queue.push(ready_task{.latest_pred_serial = latest_pred_serial, .index = i});
             }
         }
     }
 
-
-    /// @brief 
+    /// @brief
     /// @param ctx Context kept across calls to schedule_task
-    /// @param task_index 
-    /// @param sn 
-    /// @param ready_queue_size 
-    void schedule_task(size_t task_index)
-    {
+    /// @param task_index
+    /// @param sn
+    /// @param ready_queue_size
+    void schedule_task(size_t task_index) {
         const auto n_tmp = temporaries.size();
         const auto n_task = tasks.size();
 
@@ -1243,39 +1525,179 @@ struct schedule_ctx {
         // --- determine which on which queue to run the task
         size_t q = queues.graphics;
         switch (t.type) {
-        case task_type::compute_pass:
-            // a compute pass is eligible for async compute, but it must not be
-            // a critical task (i.e. the graphics queue must not starve in the meantime).
-            q = !ready_queue.empty() ? queues.compute : queues.graphics;
-            break;
-        case task_type::render_pass: q = queues.graphics; break;
-        case task_type::present: q = queues.present; break;
-        case task_type::transfer: q = queues.transfer; break;
+            case task_type::compute_pass:
+                // a compute pass is eligible for async compute, but it must not be
+                // a critical task (i.e. the graphics queue must not starve in the meantime).
+                q = !ready_queue.empty() ? queues.compute : queues.graphics;
+                break;
+            case task_type::render_pass: q = queues.graphics; break;
+            case task_type::present: q = queues.present; break;
+            case task_type::transfer: q = queues.transfer; break;
         }
         t.snn.queue = q;
 
+        submitted_task& st = submitted_tasks[sn-base_sn];
 
         // --- infer execution & memory dependencies from resource accesses
+
+        // reset vars accessed by memory_dependency
+        /*current_buffer_memory_barriers.clear();
+        current_image_memory_barriers.clear();
+        current_queue_syncs.clear();*/
+
         vk::PipelineStageFlags src_stage_flags;
         vk::PipelineStageFlags dst_stage_flags;
+        std::array<serial_number, max_queues> queue_syncs{};
+        std::array<vk::PipelineStageFlags, max_queues> queue_syncs_wait_dst_stages{};
 
         for (const auto& access : t.accesses) {
-            resource& r = *temporaries[access.index].resource;
-            memory_dependency(r, access.details, t.snn, pstate[q], src_stage_flags, dst_stage_flags);
+            memory_dependency(
+                access.index, 
+                access.details,
+                t.snn, 
+                queue_syncs,
+                queue_syncs_wait_dst_stages, 
+                st.src_stage_mask, 
+                st.dst_stage_mask);
         }
 
-        if (src_stage_flags || dst_stage_flags) {
-            // execution barrier necessary
-            fmt::print("execution barrier: {} -> {}\n", to_string(src_stage_flags),
-                to_string(dst_stage_flags));
-            pstate[q].apply_execution_barrier(t.snn.serial, src_stage_flags);
-        }
-
-        // --- update liveness sets
+        // --- update liveness sets and create concrete resources
         update_liveness(task_index);
 
-        fmt::print("Task {} (SNN {}:{})\n", t.name, q, sn);
-        submitted_tasks.set(task_index, true);
+        // --- apply queue syncs
+        bool xqsync = false;  // cross queue sync
+        for (size_t iq = 0; iq < max_queues; ++iq) {
+            if (queue_syncs[iq]) {
+                // execution barrier necessary
+                // if the exec barrier is on a different queue, then it's going to be a semaphore wait,
+                // and this ensures that all stages have finished
+                pstate[iq].apply_execution_barrier(queue_syncs[iq],
+                        iq != t.snn.queue ? vk::PipelineStageFlagBits::eBottomOfPipe
+                                          : src_stage_flags);
+                xqsync |= iq != t.snn.queue;
+            }
+        }
+
+        if (xqsync) {
+            for (size_t iq = 0; iq < max_queues; ++iq) {
+                queue_submit& qcbb = pending_submits[iq];
+                if (queue_syncs[iq] && qcbb.cb_count) {
+                    qcbb.cb_offset = next_cb_index;
+                    submits.push_back(qcbb);
+                    next_cb_index += qcbb.cb_count;
+                    qcbb.wait_sn = {};
+                    qcbb.first_sn = 0;
+                    qcbb.cb_count = 0;
+                }
+            }
+            pending_submits[t.snn.queue].wait_sn = queue_syncs;
+            pending_submits[t.snn.queue].wait_dst_stages = queue_syncs_wait_dst_stages;
+        }
+
+        if (pending_submits[t.snn.queue].cb_count == 0) {
+            pending_submits[t.snn.queue].first_sn = t.snn.serial;
+        }
+        pending_submits[t.snn.queue].cb_count++;
+        pending_submits[t.snn.queue].signal_snn = t.snn;
+
+
+        fmt::print("====================================================\n"
+                   "Task {} SNN {}:{}",
+                t.name, q, sn);
+        fmt::print(" | WAIT: ");
+        {
+            bool begin = true;
+            for (size_t iq = 0; iq < max_queues; ++iq) {
+                if (queue_syncs[iq] != 0 && iq != q) {
+                    // cross-queue semaphore wait
+                    if (!begin) {
+                        fmt::print(",");
+                    } else
+                        begin = false;
+                    fmt::print("{}:{}->{}", (uint64_t) iq, (uint64_t) queue_syncs[iq],
+                            pipeline_stages_to_string_compact(queue_syncs_wait_dst_stages[iq]));
+                }
+            }
+        }
+        if (src_stage_flags || dst_stage_flags) {
+            fmt::print(" | EX: {} -> {}", pipeline_stages_to_string_compact(src_stage_flags),
+                    pipeline_stages_to_string_compact(dst_stage_flags));
+        }
+        if (!current_buffer_memory_barriers.empty()) {
+            fmt::print(" | BMB: ");
+            bool begin = true;
+            for (auto&& s : current_buffer_memory_barriers) {
+                if (!begin) {
+                    fmt::print(",");
+                } else
+                    begin = false;
+                fmt::print("{}({}->{})", temporaries[s.resource_index].resource->name(),
+                        access_mask_to_string_compact(s.src_access_mask),
+                        access_mask_to_string_compact(s.dst_access_mask));
+            }
+        }
+        if (!current_image_memory_barriers.empty()) {
+            fmt::print(" | IMB: ");
+            bool begin = true;
+            for (auto&& s : current_image_memory_barriers) {
+                if (!begin) {
+                    fmt::print(",");
+                } else
+                    begin = false;
+                fmt::print("{}({}->{})({}->{})", temporaries[s.resource_index].resource->name(),
+                        access_mask_to_string_compact(s.src_access_mask),
+                        access_mask_to_string_compact(s.dst_access_mask),
+                        layout_to_string_compact(s.old_layout),
+                        layout_to_string_compact(s.new_layout));
+                if (s.old_layout != s.new_layout) {}
+            }
+        }
+        fmt::print("\n");
+        dump();
+        done_tasks.set(task_index, true);
+    }
+
+    size_t finish_pending_cb_batches() {
+        for (size_t i = 0; i < max_queues; ++i) {
+            if (pending_submits[i].cb_count != 0) {
+                pending_submits[i].cb_offset = next_cb_index;
+                submits.push_back(pending_submits[i]);
+                next_cb_index += pending_submits[i].cb_count;
+            }
+        }
+
+        // reorder tasks by final SNN
+        // from here on, preds and succs are invalid.
+        std::sort(tasks.begin(), tasks.end(),
+                [](const task& a, const task& b) { return a.snn.serial < b.snn.serial; });
+
+        fmt::print(
+                "====================================================\nCommand buffer batches:\n");
+        for (auto&& submit : submits) {
+            fmt::print("- W={},{},{},{} WDST={},{},{},{} S={}:{} cb_offset={} ncb={}\n",
+                    submit.wait_sn[0], submit.wait_sn[1], submit.wait_sn[2], submit.wait_sn[3],
+                    pipeline_stages_to_string_compact(submit.wait_dst_stages[0]),
+                    pipeline_stages_to_string_compact(submit.wait_dst_stages[1]),
+                    pipeline_stages_to_string_compact(submit.wait_dst_stages[2]),
+                    pipeline_stages_to_string_compact(submit.wait_dst_stages[3]),
+                    (uint64_t) submit.signal_snn.queue, (uint64_t) submit.signal_snn.serial,
+                    submit.cb_offset, submit.cb_count);
+
+            size_t i_first = submit.first_sn - base_sn;
+            size_t i_last = submit.signal_snn.serial - base_sn;
+            size_t icb = submit.cb_offset;
+            for (size_t i = i_first; i <= i_last; ++i) {
+                if (tasks[i].snn.queue == submit.signal_snn.queue) { cb_index_map[i] = icb++; }
+            }
+        }
+
+        fmt::print(
+                "====================================================\nCommand buffer indices:\n");
+        for (size_t i = 0; i < tasks.size(); ++i) {
+            fmt::print("- {} => {}\n", tasks[i].name, cb_index_map[i]);
+        }
+
+        return next_cb_index;
     }
 
     bool schedule_next() {
@@ -1288,12 +1710,8 @@ struct schedule_ctx {
     }
 };
 
-
-
 void queue_impl::enqueue_pending_tasks() {
     const auto vk_device = device_->get_vk_device();
-
-    dump_batch(batch_);
 
     // --- short-circuit if no tasks
     if (batch_.tasks.empty()) { return; }
@@ -1301,19 +1719,36 @@ void queue_impl::enqueue_pending_tasks() {
     //---------------------------------------------------
     // main scheduling loop
 
-    schedule_ctx ctx{ queue_indices_, batch_.start_serial, batch_.tasks, batch_.temporaries };
+    schedule_ctx ctx{queue_indices_, batch_.start_serial + 1, batch_.tasks, batch_.temporaries};
     while (ctx.schedule_next()) {}
+    size_t cb_count = ctx.finish_pending_cb_batches();
 
-    // reorder tasks
-    // from here on, preds and succs are invalid.
-    std::sort(batch_.tasks.begin(), batch_.tasks.end(),
-            [](const task& a, const task& b) { return a.snn.serial < b.snn.serial; });
+    dump_batch(batch_);
 
-    fmt::print("reordered tasks:\n");
-    for (const auto& t : batch_.tasks) {
-        fmt::print("   `{}` (SNN {}:{})\n", t.name, t.snn.queue, t.snn.serial);
+    std::vector<vk::CommandBuffer> cb;
+    cb.resize(cb_count, nullptr);
+
+    for (const auto& b : ctx.submits) {
+        const auto signal_semaphore_value = b.signal_snn.serial;
+        const vk::TimelineSemaphoreSubmitInfo timeline_submit_info{
+                .waitSemaphoreValueCount = (uint32_t) b.wait_sn.size(),
+                .pWaitSemaphoreValues = b.wait_sn.data(),
+                .signalSemaphoreValueCount = 1,
+                .pSignalSemaphoreValues = &signal_semaphore_value};
+
+        vk::SubmitInfo submit_info{
+                .pNext = &timeline_submit_info,
+                .waitSemaphoreCount = (uint32_t) b.wait_sn.size(),
+                .pWaitSemaphores = timelines_,
+                .pWaitDstStageMask = b.wait_dst_stages.data(),
+                .commandBufferCount = (uint32_t) b.cb_count,
+                .pCommandBuffers = cb.data() + b.cb_offset,
+                .signalSemaphoreCount = 1,
+                .pSignalSemaphores = &timelines_[b.signal_snn.queue],
+        };
+
+        device_->get_queue_by_index(b.signal_snn.queue).submit(1, &submit_info, nullptr);
     }
-
 
     // --- external synchronization ---
 

@@ -471,7 +471,7 @@ public:
     }
 
     void render(queue& q) {
-        q.schedule("background render", [](handler& h) {
+        q.render_pass("background render", [](handler& h) {
             // accessors here
         });
     }
@@ -567,7 +567,7 @@ int main() {
     queue q{dev};
 
     test_case_1(q);
-    test_parallel_branches(q); 
+    test_parallel_branches(q);
     test_aliasing_pipelining_conflicts(q);
 
     auto pp_state = init_pipeline(dev);
@@ -600,7 +600,7 @@ int main() {
         // ->
         auto next_image = swapchain.acquire_next_image();
 
-        q.schedule([&](handler& h) {
+        q.render_pass([&](handler& h) {
             //h.clear_color_image();  //
             DRAW_SWAPCHAIN(next_image)
         });
@@ -701,42 +701,40 @@ void test_case_1(graal::queue& q) {
     VIMG(J)
     VIMG(K)
 
-    q.schedule("T0", [&](handler& h) {
-        DRAW(A);
-    });
+    q.render_pass("T0", [&](handler& h) { DRAW(A); });
 
-    q.schedule("T1", [&](handler& h) { DRAW(B) });
+    q.render_pass("T1", [&](handler& h) { DRAW(B) });
 
-    q.schedule("T2", [&](handler& h) {
+    q.compute_pass("T2", [&](handler& h) {
         COMPUTE_READ(A)
         COMPUTE_READ(B)
         COMPUTE_WRITE(D1)
         COMPUTE_WRITE(D2)
     });
 
-    q.schedule("T3", [&](handler& h) { DRAW(C) });
+    q.render_pass("T3", [&](handler& h) { DRAW(C) });
 
-    q.schedule("T4", [&](handler& h) {
+    q.compute_pass("T4", [&](handler& h) {
         COMPUTE_READ(D2)
         COMPUTE_READ(C)
         COMPUTE_WRITE(E)
     });
 
-    q.schedule("T5", [&](handler& h) {
+    q.compute_pass("T5", [&](handler& h) {
         COMPUTE_READ(D1)
         COMPUTE_WRITE(F)
     });
 
-    q.schedule("T6", [&](handler& h) {
+    q.compute_pass("T6", [&](handler& h) {
         COMPUTE_READ(E)
         COMPUTE_READ(F)
         COMPUTE_WRITE(G)
     });
 
-    q.schedule("T7", [&](handler& h) { COMPUTE_READ(G) COMPUTE_WRITE(H) });
-    q.schedule("T8", [&](handler& h) { COMPUTE_READ(H) COMPUTE_WRITE(I) });
-    q.schedule("T9", [&](handler& h) { COMPUTE_READ(I) COMPUTE_READ(G) COMPUTE_WRITE(J) });
-    q.schedule("T10", [&](handler& h) { COMPUTE_READ(J) COMPUTE_WRITE(K) });
+    q.compute_pass("T7", [&](handler& h) { COMPUTE_READ(G) COMPUTE_WRITE(H) });
+    q.compute_pass("T8", [&](handler& h) { COMPUTE_READ(H) COMPUTE_WRITE(I) });
+    q.compute_pass("T9", [&](handler& h) { COMPUTE_READ(I) COMPUTE_READ(G) COMPUTE_WRITE(J) });
+    q.compute_pass("T10", [&](handler& h) { COMPUTE_READ(J) COMPUTE_WRITE(K) });
 
     /*A.discard();
   B.discard();
@@ -752,7 +750,7 @@ void test_case_1(graal::queue& q) {
 
     q.enqueue_pending_tasks();
 
-    q.schedule("T10", [&](handler& h) {
+    q.compute_pass("T10", [&](handler& h) {
         // color_attachment_accessor write_K{K, discard, h};
         // sampled_image_accessor sample_I{ I, h };
 
@@ -776,17 +774,17 @@ void test_parallel_branches(queue& q) {
         VIMG(B1);
         VIMG(B2);
         VIMG(B3);
-        q.schedule([&](handler& h) { COMPUTE_WRITE(S) });
+        q.compute_pass([&](handler& h) { COMPUTE_WRITE(S) });
         // A branch
-        q.schedule([&](handler& h) { COMPUTE_READ(S) COMPUTE_WRITE(A1) });
-        q.schedule([&](handler& h) { COMPUTE_READ(A1) COMPUTE_WRITE(A2) });
-        q.schedule([&](handler& h) { COMPUTE_READ(A2) COMPUTE_WRITE(A3) });
+        q.compute_pass([&](handler& h) { COMPUTE_READ(S) COMPUTE_WRITE(A1) });
+        q.compute_pass([&](handler& h) { COMPUTE_READ(A1) COMPUTE_WRITE(A2) });
+        q.compute_pass([&](handler& h) { COMPUTE_READ(A2) COMPUTE_WRITE(A3) });
         // B branch
-        q.schedule([&](handler& h) { COMPUTE_READ(S) COMPUTE_WRITE(B1) });
-        q.schedule([&](handler& h) { COMPUTE_READ(B1) COMPUTE_WRITE(B2) });
-        q.schedule([&](handler& h) { COMPUTE_READ(B2) COMPUTE_WRITE(B3) });
+        q.compute_pass([&](handler& h) { COMPUTE_READ(S) COMPUTE_WRITE(B1) });
+        q.compute_pass([&](handler& h) { COMPUTE_READ(B1) COMPUTE_WRITE(B2) });
+        q.compute_pass([&](handler& h) { COMPUTE_READ(B2) COMPUTE_WRITE(B3) });
         // C
-        q.schedule([&](handler& h) { COMPUTE_READ(A3) COMPUTE_READ(B3) COMPUTE_WRITE(C) });
+        q.compute_pass([&](handler& h) { COMPUTE_READ(A3) COMPUTE_READ(B3) COMPUTE_WRITE(C) });
     }
     q.enqueue_pending_tasks();
 }
@@ -800,35 +798,35 @@ void test_aliasing_pipelining_conflicts(graal::queue& q) {
 
         // B must not alias with C or D
 
-        q.schedule([&](handler& h) {
+        q.render_pass([&](handler& h) {
             h.add_image_access(A, vk::AccessFlagBits::eShaderWrite,
-                vk::PipelineStageFlagBits::eVertexShader, vk::PipelineStageFlagBits::eVertexShader,
-                vk::ImageLayout::eGeneral);
+                    vk::PipelineStageFlagBits::eVertexShader,
+                    vk::PipelineStageFlagBits::eVertexShader, vk::ImageLayout::eGeneral);
             h.add_image_access(B, vk::AccessFlagBits::eColorAttachmentWrite,
-                vk::PipelineStageFlagBits::eColorAttachmentOutput,
-                vk::PipelineStageFlagBits::eColorAttachmentOutput,
-                vk::ImageLayout::eColorAttachmentOptimal);
-            });
+                    vk::PipelineStageFlagBits::eColorAttachmentOutput,
+                    vk::PipelineStageFlagBits::eColorAttachmentOutput,
+                    vk::ImageLayout::eColorAttachmentOptimal);
+        });
 
-        q.schedule([&](handler& h) {
+        q.render_pass([&](handler& h) {
             h.add_image_access(A, vk::AccessFlagBits::eShaderRead,
-                vk::PipelineStageFlagBits::eComputeShader,
-                vk::PipelineStageFlagBits::eComputeShader, vk::ImageLayout::eGeneral);
+                    vk::PipelineStageFlagBits::eComputeShader,
+                    vk::PipelineStageFlagBits::eComputeShader, vk::ImageLayout::eGeneral);
 
             h.add_image_access(C, vk::AccessFlagBits::eShaderWrite,
-                vk::PipelineStageFlagBits::eComputeShader,
-                vk::PipelineStageFlagBits::eComputeShader, vk::ImageLayout::eGeneral);
-            });
+                    vk::PipelineStageFlagBits::eComputeShader,
+                    vk::PipelineStageFlagBits::eComputeShader, vk::ImageLayout::eGeneral);
+        });
 
-        q.schedule([&](handler& h) {
+        q.render_pass([&](handler& h) {
             h.add_image_access(C, vk::AccessFlagBits::eShaderRead,
-                vk::PipelineStageFlagBits::eComputeShader,
-                vk::PipelineStageFlagBits::eComputeShader, vk::ImageLayout::eGeneral);
+                    vk::PipelineStageFlagBits::eComputeShader,
+                    vk::PipelineStageFlagBits::eComputeShader, vk::ImageLayout::eGeneral);
 
             h.add_image_access(D, vk::AccessFlagBits::eShaderWrite,
-                vk::PipelineStageFlagBits::eComputeShader,
-                vk::PipelineStageFlagBits::eComputeShader, vk::ImageLayout::eGeneral);
-            });
+                    vk::PipelineStageFlagBits::eComputeShader,
+                    vk::PipelineStageFlagBits::eComputeShader, vk::ImageLayout::eGeneral);
+        });
     }
 
     q.enqueue_pending_tasks();
