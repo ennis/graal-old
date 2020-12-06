@@ -61,10 +61,10 @@ bool adjust_allocation_requirements(
     // TODO dedicated allocs?
     if (req_a.flags != req_b.flags) return false;
     // don't alias if the memory type bits are not strictly the same
-    if (req_a.memory_type_bits != req_b.memory_type_bits) return false;
+    if (req_a.memreq.memoryTypeBits != req_b.memreq.memoryTypeBits) return false;
 
-    req_a.alignment = std::max(req_a.alignment, req_b.alignment);
-    req_a.size = std::max(req_a.size, req_b.size);
+    req_a.memreq.alignment = std::max(req_a.memreq.alignment, req_b.memreq.alignment);
+    req_a.memreq.size = std::max(req_a.memreq.size, req_b.memreq.size);
     return true;
 }
 
@@ -187,70 +187,7 @@ std::string_view layout_to_string_compact(vk::ImageLayout layout) {
 }
 
 using variable_set = boost::dynamic_bitset<uint64_t>;
-void dump_tasks(
-        std::ostream& out, std::span<const task> tasks, std::span<const temporary> temporaries) {
-    out << "digraph G {\n";
-    out << "node [shape=record fontname=Consolas];\n";
 
-    for (task_index index = 0; index < tasks.size(); ++index) {
-        const auto& task = tasks[index];
-
-        out << "t_" << index << " [shape=record style=filled fillcolor=\"";
-        switch (task.snn.queue) {
-            case 0: out << "#ffff99"; break;
-            case 1: out << "#7fc97f"; break;
-            case 2: out << "#fdc086"; break;
-            case 3:
-            default: out << "#beaed4"; break;
-        }
-
-        out << "\" label=\"{";
-        out << task.name;
-        out << "|sn=" << task.snn.serial << "(q=" << task.snn.queue << ")";
-        out << "\\lreads=";
-        {
-            bool first = true;
-            for (const auto& a : task.accesses) {
-                if (is_read_access(a.details.access_flags)) {
-                    if (!first) {
-                        out << ",";
-                    } else {
-                        first = false;
-                    }
-                    out << get_object_name(a.index, *temporaries[a.index].resource);
-                    out << "(" << access_mask_to_string_compact(a.details.access_flags) << ")";
-                }
-            }
-        }
-        out << "\\lwrites=";
-        {
-            bool first = true;
-            for (const auto& a : task.accesses) {
-                if (is_write_access(a.details.access_flags)) {
-                    if (!first) {
-                        out << ",";
-                    } else {
-                        first = false;
-                    }
-                    out << get_object_name(a.index, *temporaries[a.index].resource);
-                    out << "(" << access_mask_to_string_compact(a.details.access_flags) << ")";
-                }
-            }
-        }
-        out << "}\"]\n";
-    }
-
-    for (task_index i = 0; i < tasks.size(); ++i) {
-        for (auto pred : tasks[i].preds) {
-            out << "t_" << pred << " -> "
-                << "t_" << i << "\n";
-        }
-    }
-
-    out << "}\n";
-}
-
-struct allocate_batch_memory_results {};
 
 // Computes the transitive closure of the task graph, which tells us
 // whether there's a path between two tasks in the graph.
@@ -271,7 +208,7 @@ std::vector<variable_set> transitive_closure(std::span<const task> tasks) {
     return m;
 }
 
-allocate_batch_memory_results allocate_batch_memory(device_impl_ptr device, serial_number start_sn,
+void allocate_batch_memory(device_impl_ptr device, serial_number start_sn,
         std::span<task> tasks, std::span<temporary> temporaries,
         std::span<const variable_set> reachability) {
     // --- start perf timer for submission
@@ -489,8 +426,8 @@ allocate_batch_memory_results allocate_batch_memory(device_impl_ptr device, seri
                    "           align={}\n"
                    "           flags={}\n"
                    "           memory_type_bits={}\n",
-                i, alloc.size, alloc.alignment, alloc.flags.underlying_value(),
-                alloc.memory_type_bits);
+                i, alloc.memreq.size, alloc.memreq.alignment, alloc.flags.underlying_value(),
+                alloc.memreq.memoryTypeBits);
     }
 
     fmt::print("\nMemory block assignments:\n");
@@ -514,7 +451,7 @@ allocate_batch_memory_results allocate_batch_memory(device_impl_ptr device, seri
 
     // dump task graph with live-variable analysis to a graphviz file
 #endif
-    return {};
+    //return {};
 }
 
 inline constexpr bool is_render_pass_attachment_access(vk::AccessFlags flags) {
@@ -805,11 +742,6 @@ static void dump_batch(batch& b) {
         task_index++;
     }
 
-    {
-        std::ofstream out_graphviz{
-                fmt::format("graal_test_{}.dot", b.start_serial), std::ios::trunc};
-        dump_tasks(out_graphviz, b.tasks, b.temporaries);
-    }
 }
 
 //-----------------------------------------------------------------------------
@@ -838,7 +770,7 @@ public:
         auto& task = batch_.tasks.back();
         last_serial_++;
         task.name = name;
-        task.snn.serial = last_serial_;  // temporary SNN for DAG creation
+        task.sn = last_serial_;  // temporary SNN for DAG creation
         return task;
     }
 
@@ -1032,19 +964,17 @@ struct queue_submit {
 struct submitted_task {
     vk::PipelineStageFlags src_stage_mask;
     vk::PipelineStageFlags dst_stage_mask;
+    submission_number snn;
     size_t cb_index;
     size_t num_image_memory_barriers;
-    const vk::ImageMemoryBarrier* image_memory_barriers;
+    size_t image_memory_barriers_offset;  // offset into the vector of image barriers
     size_t num_buffer_memory_barriers;
-    const vk::BufferMemoryBarrier* buffer_memory_barriers;
+    size_t buffer_memory_barriers_offset;  // offset into the vector of buffer barriers
 };
 
 struct device_memory_allocation {
-    allocation_flags flags;
-    uint32_t memory_type_bits;
-    size_t size;
-    size_t alignment;
-    VmaAllocation allocation;
+    allocation_requirements req;
+    VmaAllocation alloc;
 };
 
 struct schedule_ctx {
@@ -1076,13 +1006,10 @@ struct schedule_ctx {
 
     // --- device memory allocations
     std::vector<device_memory_allocation> allocations;
-    std::vector<size_t> allocation_map; // tmp index -> allocations
-
+    std::vector<size_t> allocation_map;  // tmp index -> allocations
 
     // memory_dependency state for the task being submitted
-    std::vector<buffer_memory_barrier> current_buffer_memory_barriers;
-    std::vector<image_memory_barrier> current_image_memory_barriers;
-    std::vector<submission_number> current_queue_syncs;
+    //std::vector<submission_number> current_queue_syncs;
 
     // --- submits
     std::array<queue_submit, max_queues> pending_submits{};
@@ -1090,11 +1017,14 @@ struct schedule_ctx {
     std::vector<submitted_task> submitted_tasks;
     //std::vector<size_t> cb_index_map;
     size_t next_cb_index = 0;
-    std::vector<image_memory_barrier> image_memory_barriers;
-    std::vector<buffer_memory_barrier> buffer_memory_barriers;
+    std::vector<vk::BufferMemoryBarrier> buffer_memory_barriers;
+    std::vector<vk::ImageMemoryBarrier> image_memory_barriers;
+    std::vector<size_t> buffer_memory_barriers_temporaries;   // temporary indices of the resources referenced in buffer_memory_barriers, for debugging
+    std::vector<size_t> image_memory_barriers_temporaries;   // temporary indices of the resources referenced in buffer_memory_barriers, for debugging
 
-    schedule_ctx(queue_indices queues, serial_number base_sn, std::span<task> tasks,
+    schedule_ctx(device_impl_ptr device, queue_indices queues, serial_number base_sn, std::span<task> tasks,
             std::span<temporary> temporaries) :
+        device{std::move(device)},
         queues{queues},
         base_sn{base_sn}, next_sn{base_sn}, tasks{tasks}, temporaries{temporaries} {
         const auto n_task = tasks.size();
@@ -1218,65 +1148,60 @@ struct schedule_ctx {
         fmt::print("\n");
     }
 
-   /// @brief Assigns a memory block for the given temporary,
-   /// possibly aliasing with a temporary that can be proven dead in the current scheduling state.
-   /// @param tmp_index the index of the temporary to assign a memory block to
-   void assign_device_memory(size_t tmp_index)
-   {
-       auto allocator = device->get_allocator();
-       auto& tmp0 = temporaries[tmp_index].resource;
+    /// @brief Assigns a memory block for the given temporary,
+    /// possibly aliasing with a temporary that can be proven dead in the current scheduling state.
+    /// @param tmp_index the index of the temporary to assign a memory block to
+    void assign_device_memory(size_t tmp_index) {
+        auto allocator = device->get_allocator();
+        auto& tmp0 = temporaries[tmp_index].resource;
 
-       // skip if it doesn't need allocation
-       if (!tmp0->is_virtual()) return;
-       if (tmp0->allocated) return;
+        // skip if it doesn't need allocation
+        if (!tmp0->is_virtual()) return;
+        if (tmp0->allocated) return;
 
-       virtual_resource& vres = static_cast<virtual_resource&>(*tmp0);
-       const auto requirements = vres.get_allocation_requirements(device);
+        virtual_resource& vres = static_cast<virtual_resource&>(*tmp0);
+        const auto requirements = vres.get_allocation_requirements(device);
 
-       // resource became alive, if possible, alias with a dead
-       // temporary, otherwise allocate a new one.
+        // resource became alive, if possible, alias with a dead
+        // temporary, otherwise allocate a new one.
+        if (!(requirements.flags & allocation_flag::aliasable)) {
+            allocations.push_back(device_memory_allocation{
+                    .req = requirements,
+                    .alloc = nullptr  // allocated later, as requirements might change
+            });
+            allocation_map.push_back(allocations.size() - 1);
+        } else {
+            // whether we managed to find a dead resource to alias with
+            bool aliased = false;
+            for (size_t t1 = 0; t1 < temporaries.size(); ++t1) {
+                // filter out live resources
+                if (!dead[t1]) continue;
 
-       if (!(requirements.flags & allocation_flag::aliasable))
-       {
-           device_memory_allocation alloc{
-               .memory_type_bits = requirements.memory_type_bits,
-               .alignment = requirements.alignment,
-           }
-           allocations.push_back(requirements);
-           allocation_map.push_back(allocations.size() - 1);
-       }
-       else {
-           // whether we managed to find a dead resource to alias with
-           bool aliased = false;
-           for (size_t t1 = 0; t1 < temporaries.size(); ++t1) {
-               // filter out live resources
-               if (!dead[t1]) continue;
+                auto i_alloc = allocation_map[t1];
+                auto& dead_alloc = allocations[i_alloc];
 
-               auto i_alloc = allocation_map[t1];
-               auto& dead_requirements = allocations[i_alloc];
+                if (adjust_allocation_requirements(dead_alloc.req, requirements)) {
+                    // the two resources may alias; the requirements
+                    // have been adjusted
+                    allocation_map[tmp_index] = i_alloc;
+                    // not dead anymore
+                    dead[t1] = false;
+                    aliased = true;
+                    break;
+                }
 
-               if (adjust_allocation_requirements(
-                   dead_alloc_requirements, requirements)) {
-                   // the two resources may alias; the requirements
-                   // have been adjusted
-                   alloc_map[t0] = i_alloc;
-                   // not dead anymore
-                   dead[t1] = false;
-                   aliased = true;
-                   break;
-               }
+                // otherwise continue
+            }
 
-               // otherwise continue
-           }
-
-           // no aliasing opportunities
-           if (!aliased) {
-               // new allocation
-               allocations.push_back(alloc_requirements);
-               alloc_map[t0] = allocations.size() - 1;
-           }
-       }
-   }
+            // no aliasing opportunities
+            if (!aliased) {
+                // new allocation
+                allocations.push_back(
+                        device_memory_allocation{.req = requirements, .alloc = nullptr});
+                allocation_map[tmp_index] = allocations.size() - 1;
+            }
+        }
+    }
 
     /// @brief Handles a memory dependency on a resource.
     /// @param resource the resource
@@ -1291,20 +1216,16 @@ struct schedule_ctx {
     /// This function updates the required src_stage_flags and dst_stage_flags of pipeline barrier.
     /// It also updates the `current_buffer_memory_barriers`, `current_image_memory_barriers` and `current_queue_syncs` members
     /// by appending the necessary memory barriers.
-    void memory_dependency(
-        size_t resource_index,
-        const resource_access_details& access,
-        submission_number snn, 
-        std::array<serial_number, max_queues>& queue_syncs,
+    void memory_dependency(size_t resource_index, const resource_access_details& access,
+            submission_number snn, std::array<serial_number, max_queues>& queue_syncs,
             std::array<vk::PipelineStageFlags, max_queues>& queue_syncs_wait_dst_stages,
-            vk::PipelineStageFlags& src_stage_flags, 
-        vk::PipelineStageFlags& dst_stage_flags) 
-    {
+            size_t& num_image_memory_barriers, size_t& num_buffer_memory_barriers,
+            vk::PipelineStageFlags& src_stage_flags, vk::PipelineStageFlags& dst_stage_flags) {
         auto& r = rstate[resource_index];
         const bool writing = is_write_access(access.access_flags) || access.layout != r.layout;
         const bool reading = is_read_access(access.access_flags);
 
-        // TODO ensure that the resource is allocated
+        // --- assign device memory for the
 
         // --- is an execution barrier necessary for this access?
 
@@ -1336,27 +1257,34 @@ struct schedule_ctx {
                         r.access_flags);  // covers WAW hazards across the same access type (writes must happen in order)
 
         if (needs_layout_transition || visibility_hazard || waw_hazard) {
-            const auto& resource = *temporaries[resource_index].resource;
+            auto& resource = *temporaries[resource_index].resource;
             if (resource.type() == resource_type::image
                     || resource.type() == resource_type::swapchain_image) {
-                current_image_memory_barriers.push_back(image_memory_barrier{
-                        .resource_index = resource_index,
-                        .src_access_mask = r.access_flags,
-                        .dst_access_mask = access.access_flags,
-                        .old_layout = r.layout,
-                        .new_layout = access.layout,
+                vk::Image vk_image = nullptr;
+                if (resource.type() == resource_type::image) {
+                    vk_image = static_cast<image_impl&>(resource).get_unbound_vk_image(device);
+                } else {
+                    vk_image = static_cast<swapchain_image_impl&>(resource).get_vk_image();
+                }
+
+                image_memory_barriers.push_back(vk::ImageMemoryBarrier{
+                        .srcAccessMask = r.access_flags,
+                        .dstAccessMask = access.access_flags,
+                        .oldLayout = r.layout,
+                        .newLayout = access.layout,
+                        .image = vk_image,
                 });
-                /*fmt::print("image barrier #{} {},{} -> {},{}\n", resource.name(),
-                        to_string(r.layout), to_string(r.access_flags), to_string(access.layout),
-                        to_string(access.access_flags));*/
+                image_memory_barriers_temporaries.push_back(resource_index);
+                num_image_memory_barriers++;
             } else if (resource.type() == resource_type::buffer) {
-                current_buffer_memory_barriers.push_back(buffer_memory_barrier{
-                        .resource_index = resource_index,
-                        .src_access_mask = r.access_flags,
-                        .dst_access_mask = access.access_flags,
-                });
-                /*fmt::print("buffer barrier #{} {} -> {}\n", resource.name(),
-                        to_string(r.access_flags), to_string(access.access_flags));*/
+                const vk::Buffer vk_buffer =
+                        static_cast<buffer_impl&>(resource).get_vk_buffer(device);
+                buffer_memory_barriers.push_back(
+                        vk::BufferMemoryBarrier{.srcAccessMask = r.access_flags,
+                                .dstAccessMask = access.access_flags,
+                                .buffer = vk_buffer});
+                buffer_memory_barriers_temporaries.push_back(resource_index);
+                num_buffer_memory_barriers++;
             }
         }
 
@@ -1382,8 +1310,6 @@ struct schedule_ctx {
             r.access_flags |= access.access_flags;
         }
     }
-
-   
 
     void update_liveness(size_t task_index) {
         // update live/dead sets
@@ -1520,11 +1446,12 @@ struct schedule_ctx {
 
         const auto sn = next_sn++;
         task& t = tasks[task_index];
-        t.snn.serial = sn;  // replace the temporary serial with the final one
+
+        //t.snn.serial = sn;  // replace the temporary serial with the final one
 
         // --- determine which on which queue to run the task
         size_t q = queues.graphics;
-        switch (t.type) {
+        switch (t.type()) {
             case task_type::compute_pass:
                 // a compute pass is eligible for async compute, but it must not be
                 // a critical task (i.e. the graphics queue must not starve in the meantime).
@@ -1534,31 +1461,26 @@ struct schedule_ctx {
             case task_type::present: q = queues.present; break;
             case task_type::transfer: q = queues.transfer; break;
         }
-        t.snn.queue = q;
 
-        submitted_task& st = submitted_tasks[sn-base_sn];
+        submission_number snn{
+            .queue = q,
+            .serial = sn
+        };
+        
+        submitted_task& st = submitted_tasks[sn - base_sn];
+        st.snn = snn;
 
         // --- infer execution & memory dependencies from resource accesses
-
-        // reset vars accessed by memory_dependency
-        /*current_buffer_memory_barriers.clear();
-        current_image_memory_barriers.clear();
-        current_queue_syncs.clear();*/
-
         vk::PipelineStageFlags src_stage_flags;
         vk::PipelineStageFlags dst_stage_flags;
         std::array<serial_number, max_queues> queue_syncs{};
         std::array<vk::PipelineStageFlags, max_queues> queue_syncs_wait_dst_stages{};
-
+        st.image_memory_barriers_offset = image_memory_barriers.size();
+        st.buffer_memory_barriers_offset = buffer_memory_barriers.size();
         for (const auto& access : t.accesses) {
-            memory_dependency(
-                access.index, 
-                access.details,
-                t.snn, 
-                queue_syncs,
-                queue_syncs_wait_dst_stages, 
-                st.src_stage_mask, 
-                st.dst_stage_mask);
+            memory_dependency(access.index, access.details, snn, queue_syncs,
+                    queue_syncs_wait_dst_stages, st.num_image_memory_barriers,
+                    st.num_buffer_memory_barriers, st.src_stage_mask, st.dst_stage_mask);
         }
 
         // --- update liveness sets and create concrete resources
@@ -1572,9 +1494,9 @@ struct schedule_ctx {
                 // if the exec barrier is on a different queue, then it's going to be a semaphore wait,
                 // and this ensures that all stages have finished
                 pstate[iq].apply_execution_barrier(queue_syncs[iq],
-                        iq != t.snn.queue ? vk::PipelineStageFlagBits::eBottomOfPipe
+                        iq != snn.queue ? vk::PipelineStageFlagBits::eBottomOfPipe
                                           : src_stage_flags);
-                xqsync |= iq != t.snn.queue;
+                xqsync |= iq != snn.queue;
             }
         }
 
@@ -1590,16 +1512,15 @@ struct schedule_ctx {
                     qcbb.cb_count = 0;
                 }
             }
-            pending_submits[t.snn.queue].wait_sn = queue_syncs;
-            pending_submits[t.snn.queue].wait_dst_stages = queue_syncs_wait_dst_stages;
+            pending_submits[snn.queue].wait_sn = queue_syncs;
+            pending_submits[snn.queue].wait_dst_stages = queue_syncs_wait_dst_stages;
         }
 
-        if (pending_submits[t.snn.queue].cb_count == 0) {
-            pending_submits[t.snn.queue].first_sn = t.snn.serial;
+        if (pending_submits[snn.queue].cb_count == 0) {
+            pending_submits[snn.queue].first_sn = snn.serial;
         }
-        pending_submits[t.snn.queue].cb_count++;
-        pending_submits[t.snn.queue].signal_snn = t.snn;
-
+        pending_submits[snn.queue].cb_count++;
+        pending_submits[snn.queue].signal_snn = snn;
 
         fmt::print("====================================================\n"
                    "Task {} SNN {}:{}",
@@ -1623,33 +1544,34 @@ struct schedule_ctx {
             fmt::print(" | EX: {} -> {}", pipeline_stages_to_string_compact(src_stage_flags),
                     pipeline_stages_to_string_compact(dst_stage_flags));
         }
-        if (!current_buffer_memory_barriers.empty()) {
+        if (st.num_buffer_memory_barriers) {
             fmt::print(" | BMB: ");
             bool begin = true;
-            for (auto&& s : current_buffer_memory_barriers) {
+            for (size_t i = 0; i < st.num_buffer_memory_barriers; ++i) {
+                const auto& s = buffer_memory_barriers[st.buffer_memory_barriers_offset + i];
                 if (!begin) {
                     fmt::print(",");
                 } else
                     begin = false;
-                fmt::print("{}({}->{})", temporaries[s.resource_index].resource->name(),
-                        access_mask_to_string_compact(s.src_access_mask),
-                        access_mask_to_string_compact(s.dst_access_mask));
+                fmt::print("{}({}->{})", temporaries[buffer_memory_barriers_temporaries[st.buffer_memory_barriers_offset + i]].resource->name(),
+                        access_mask_to_string_compact(s.srcAccessMask),
+                        access_mask_to_string_compact(s.dstAccessMask));
             }
         }
-        if (!current_image_memory_barriers.empty()) {
+        if (!st.num_image_memory_barriers) {
             fmt::print(" | IMB: ");
             bool begin = true;
-            for (auto&& s : current_image_memory_barriers) {
+            for (size_t i = 0; i < st.num_image_memory_barriers; ++i) {
+                const auto& s = image_memory_barriers[st.image_memory_barriers_offset + i];
                 if (!begin) {
                     fmt::print(",");
                 } else
                     begin = false;
-                fmt::print("{}({}->{})({}->{})", temporaries[s.resource_index].resource->name(),
-                        access_mask_to_string_compact(s.src_access_mask),
-                        access_mask_to_string_compact(s.dst_access_mask),
-                        layout_to_string_compact(s.old_layout),
-                        layout_to_string_compact(s.new_layout));
-                if (s.old_layout != s.new_layout) {}
+                fmt::print("{}({}->{})({}->{})", temporaries[image_memory_barriers_temporaries[st.buffer_memory_barriers_offset + i]].resource->name(),
+                        access_mask_to_string_compact(s.srcAccessMask),
+                        access_mask_to_string_compact(s.dstAccessMask),
+                        layout_to_string_compact(s.oldLayout),
+                        layout_to_string_compact(s.newLayout));
             }
         }
         fmt::print("\n");
@@ -1669,7 +1591,7 @@ struct schedule_ctx {
         // reorder tasks by final SNN
         // from here on, preds and succs are invalid.
         std::sort(tasks.begin(), tasks.end(),
-                [](const task& a, const task& b) { return a.snn.serial < b.snn.serial; });
+                [](const task& a, const task& b) { return a.sn < b.sn; });  // XXX avoid sorting those; 
 
         fmt::print(
                 "====================================================\nCommand buffer batches:\n");
@@ -1687,14 +1609,14 @@ struct schedule_ctx {
             size_t i_last = submit.signal_snn.serial - base_sn;
             size_t icb = submit.cb_offset;
             for (size_t i = i_first; i <= i_last; ++i) {
-                if (tasks[i].snn.queue == submit.signal_snn.queue) { cb_index_map[i] = icb++; }
+                if (submitted_tasks[i].snn.queue == submit.signal_snn.queue) { submitted_tasks[i].cb_index = icb++; }
             }
         }
 
         fmt::print(
                 "====================================================\nCommand buffer indices:\n");
         for (size_t i = 0; i < tasks.size(); ++i) {
-            fmt::print("- {} => {}\n", tasks[i].name, cb_index_map[i]);
+            fmt::print("- {} => {}\n", tasks[i].name, submitted_tasks[i].cb_index);
         }
 
         return next_cb_index;
@@ -1710,6 +1632,77 @@ struct schedule_ctx {
     }
 };
 
+void dump_tasks(
+    std::ostream& out,
+    std::span<const task> tasks,
+    std::span<const temporary> temporaries,
+    std::span<const submitted_task> submitted_tasks)
+{
+    out << "digraph G {\n";
+    out << "node [shape=record fontname=Consolas];\n";
+
+    for (task_index index = 0; index < tasks.size(); ++index) {
+        const auto& task = tasks[index];
+        const auto& submitted_task = submitted_tasks[index];
+
+        out << "t_" << index << " [shape=record style=filled fillcolor=\"";
+        switch (submitted_task.snn.queue) {
+        case 0: out << "#ffff99"; break;
+        case 1: out << "#7fc97f"; break;
+        case 2: out << "#fdc086"; break;
+        case 3:
+        default: out << "#beaed4"; break;
+        }
+
+        out << "\" label=\"{";
+        out << task.name;
+        out << "|sn=" << submitted_task.snn.serial << "(q=" << submitted_task.snn.queue << ")";
+        out << "\\lreads=";
+        {
+            bool first = true;
+            for (const auto& a : task.accesses) {
+                if (is_read_access(a.details.access_flags)) {
+                    if (!first) {
+                        out << ",";
+                    }
+                    else {
+                        first = false;
+                    }
+                    out << get_object_name(a.index, *temporaries[a.index].resource);
+                    out << "(" << access_mask_to_string_compact(a.details.access_flags) << ")";
+                }
+            }
+        }
+        out << "\\lwrites=";
+        {
+            bool first = true;
+            for (const auto& a : task.accesses) {
+                if (is_write_access(a.details.access_flags)) {
+                    if (!first) {
+                        out << ",";
+                    }
+                    else {
+                        first = false;
+                    }
+                    out << get_object_name(a.index, *temporaries[a.index].resource);
+                    out << "(" << access_mask_to_string_compact(a.details.access_flags) << ")";
+                }
+            }
+        }
+        out << "}\"]\n";
+    }
+
+    for (task_index i = 0; i < tasks.size(); ++i) {
+        for (auto pred : tasks[i].preds) {
+            out << "t_" << pred << " -> "
+                << "t_" << i << "\n";
+        }
+    }
+
+    out << "}\n";
+}
+
+
 void queue_impl::enqueue_pending_tasks() {
     const auto vk_device = device_->get_vk_device();
 
@@ -1719,16 +1712,48 @@ void queue_impl::enqueue_pending_tasks() {
     //---------------------------------------------------
     // main scheduling loop
 
-    schedule_ctx ctx{queue_indices_, batch_.start_serial + 1, batch_.tasks, batch_.temporaries};
+    schedule_ctx ctx{device_, queue_indices_, batch_.start_serial + 1, batch_.tasks, batch_.temporaries};
     while (ctx.schedule_next()) {}
     size_t cb_count = ctx.finish_pending_cb_batches();
 
+    // the state so far:
+    // - `ctx.submitted_tasks` contains a list of all submitted tasks, in order
+    // - each entry in `ctx.submits` corresponds to a vkQueueSubmit 
+    // - `cb_count` is the total number of command buffers necessary
+    // - `cctx.submitted_tasks[i].cb_index` is the index of the command buffer for task i
+
     dump_batch(batch_);
+
+    {
+        std::ofstream out_graphviz{
+                fmt::format("graal_test_{}.dot", batch_.start_serial), std::ios::trunc };
+        dump_tasks(out_graphviz, batch_.tasks, batch_.temporaries, ctx.submitted_tasks);
+    }
 
     std::vector<vk::CommandBuffer> cb;
     cb.resize(cb_count, nullptr);
+    batch_thread_resources thread_resources{ .cb_pool = get_command_buffer_pool() };
 
-    for (const auto& b : ctx.submits) {
+    // fill command buffers
+    for (size_t i = 0; i < batch_.tasks.size(); ++i) {
+        auto& t = batch_.tasks[i];
+        auto& st = ctx.submitted_tasks[i];
+
+        const auto command_buffer = thread_resources.cb_pool.fetch_command_buffer(vk_device);
+        cb[st.cb_index] = command_buffer;
+
+        if (t.type() == task_type::render_pass) {
+            if (t.detail.render.callback)
+            t.detail.render.callback(t.detail.render.render_pass, command_buffer);
+        }
+        else if (t.type() == task_type::compute_pass) {
+            if (t.detail.compute.callback)
+            t.detail.compute.callback(command_buffer);
+        }
+    }
+
+    for (const auto& b : ctx.submits)
+    {
         const auto signal_semaphore_value = b.signal_snn.serial;
         const vk::TimelineSemaphoreSubmitInfo timeline_submit_info{
                 .waitSemaphoreValueCount = (uint32_t) b.wait_sn.size(),
@@ -1788,7 +1813,6 @@ void queue_impl::enqueue_pending_tasks() {
 
     // TODO parallel submission
 
-    batch_thread_resources thread_resources{.cb_pool = get_command_buffer_pool()};
     batch_.threads.push_back(std::move(thread_resources));
 
     // stash the current batch
@@ -1928,7 +1952,7 @@ void queue_impl::wait_for_task(uint64_t sequence_number) {
 /// @param use_binary_semaphore whether to synchronize using a binary semaphore.
 /// before < after; if use_binary_semaphore == true, then before must also correspond to an unsubmitted task.
 void queue_impl::add_task_dependency(task& t, serial_number before, bool use_binary_semaphore) {
-    assert(t.snn.serial > before);
+    assert(t.sn > before);
 
     if (before <= completed_serial_) {
         // no sync needed, task has already completed
@@ -1946,7 +1970,7 @@ void queue_impl::add_task_dependency(task& t, serial_number before, bool use_bin
                 before - batch_.start_serial - 1;  // SN relative to start of batch
         auto& before_task = batch_.tasks[local_task_index];
         t.preds.push_back(local_task_index);
-        before_task.succs.push_back(t.snn.serial - batch_.start_serial - 1);
+        before_task.succs.push_back(t.sn - batch_.start_serial - 1);
     }
 }
 
@@ -1971,7 +1995,7 @@ void queue_impl::add_resource_dependency(
 
     if (writing) {
         // we're writing to this resource: set last write SN
-        tmp.last_write = t.snn.serial;
+        tmp.last_write = t.sn;
     }
 
     // add resource dependency to the task and update resource usage flags

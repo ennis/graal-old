@@ -204,9 +204,10 @@ public:
     void bind_memory(device_impl_ptr device, VmaAllocation allocation,
             VmaAllocationInfo allocation_info) override;
 
-protected:
     // Creates the VkImage without binding memory
     vk::Image get_unbound_vk_image(device_impl_ptr dev);
+
+protected:
 
     device_impl_ptr device_impl_;
     image_type type_;

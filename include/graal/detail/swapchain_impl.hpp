@@ -41,7 +41,7 @@ class swapchain_image_impl : public resource {
 
 public:
     swapchain_image_impl(
-            std::shared_ptr<detail::swapchain_impl> swapchain, vk::Image image, size_t index) :
+            std::shared_ptr<detail::swapchain_impl> swapchain, vk::Image image, uint32_t index) :
         resource{resource_type::swapchain_image},
         swapchain_{std::move(swapchain)}, image_{image}, index_{index} {
     }
@@ -61,7 +61,7 @@ public:
 private:
     std::shared_ptr<detail::swapchain_impl> swapchain_;
     vk::Image image_;
-    size_t index_;
+    uint32_t index_;
 };
 
 }  // namespace graal::detail

@@ -29,9 +29,7 @@ using allocation_flags = flags<allocation_flag>;
 /// @brief
 struct allocation_requirements {
     allocation_flags flags;
-    uint32_t memory_type_bits;
-    size_t size;
-    size_t alignment;
+    vk::MemoryRequirements memreq;
 };
 
 enum class resource_type {

@@ -623,66 +623,6 @@ void draw_frame(graal::queue& q) {
 
 namespace graal {
 
-enum class attachment_load_op {
-    clear = VK_ATTACHMENT_LOAD_OP_CLEAR,
-    load = VK_ATTACHMENT_LOAD_OP_LOAD,
-    dont_care = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-};
-
-enum class attachment_store_op {
-    store = VK_ATTACHMENT_STORE_OP_STORE,
-    dont_care = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-};
-
-struct clear_color_value {
-    clear_color_value(float r, float g, float b, float a) {
-        value.float32[0] = r;
-        value.float32[1] = g;
-        value.float32[2] = b;
-        value.float32[3] = a;
-    }
-
-    clear_color_value(int32_t r, int32_t g, int32_t b, int32_t a) {
-        value.int32[0] = r;
-        value.int32[1] = g;
-        value.int32[2] = b;
-        value.int32[3] = a;
-    }
-
-    clear_color_value(uint32_t r, uint32_t g, uint32_t b, uint32_t a) {
-        value.uint32[0] = r;
-        value.uint32[1] = g;
-        value.uint32[2] = b;
-        value.uint32[3] = a;
-    }
-
-    VkClearColorValue value;
-};
-
-struct clear_depth_stencil_value {};
-
-struct clear_value {
-    VkClearValue cv;
-};
-
-struct attachment_desc {
-    // color_attachment, color format
-    template<image_type D, bool Ext>
-    attachment_desc(image<D, Ext> image, attachment_load_op load_op, attachment_store_op store_op,
-            clear_color_value clear_value = {});
-
-    // color_attachment, depth-stencil format
-    template<image_type D, bool Ext>
-    attachment_desc(image<D, Ext> image, attachment_load_op load_op, attachment_store_op store_op,
-            attachment_load_op stencil_load_op, attachment_store_op stencil_store_op,
-            clear_depth_stencil_value clear_value = {});
-};
-
-struct render_pass_desc {
-    std::span<const attachment_desc> color_attachments;
-    std::span<const attachment_desc> input_attachments;
-    const attachment_desc* depth_attachment = nullptr;
-};
 
 }  // namespace graal
 

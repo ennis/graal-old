@@ -19,9 +19,7 @@ buffer_impl::get_allocation_requirements(device_impl_ptr dev) {
   const vk::MemoryRequirements mem_req =
       vk_device.getBufferMemoryRequirements(vk_buffer);
   return allocation_requirements{.flags = allocation_flags_,
-                                 .memory_type_bits = mem_req.memoryTypeBits,
-                                 .size = mem_req.size,
-                                 .alignment = mem_req.alignment};
+        .memreq = mem_req };
 }
 
 vk::Buffer buffer_impl::get_unbound_vk_buffer(device_impl_ptr dev) {

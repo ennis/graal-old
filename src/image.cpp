@@ -34,9 +34,7 @@ allocation_requirements image_impl::get_allocation_requirements(device_impl_ptr 
     const auto vk_buffer = get_unbound_vk_image(dev);
     const vk::MemoryRequirements mem_req = vk_device.getImageMemoryRequirements(vk_buffer);
     return allocation_requirements{.flags = allocation_flags_,
-            .memory_type_bits = mem_req.memoryTypeBits,
-            .size = mem_req.size,
-            .alignment = mem_req.alignment};
+            .memreq = mem_req };
 }
 
 // Creates a VkImage without bound memory

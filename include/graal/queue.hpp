@@ -157,7 +157,6 @@ private:
     void schedule(std::string_view name, detail::task_type type, F f) {
         // create task
         auto& task = create_task(name);
-        task.type = type;
         handler h{*impl_, task};
         f(h);
     }
