@@ -47,6 +47,16 @@ public:
         std::fill(last_access.begin(), last_access.end(), 0);
     }
 
+    /// @brief If the resource is an image, returns the corresponding VkImage object.
+    /// @param device The device used to create the VkImage object, if it was not created yet.
+    /// @return nullptr if the resource is not an image.
+    vk::Image as_vk_image(device_impl_ptr device);
+
+    /// @brief If the resource is an image, returns the corresponding VkImage object.
+    /// @param device The device used to create the VkImage object, if it was not created yet.
+    /// @return nullptr if the resource is not an image.
+    vk::Buffer as_vk_buffer(device_impl_ptr device);
+
     [[nodiscard]] bool is_virtual() const noexcept {
         return type_ == resource_type::image || type_ == resource_type::buffer;
     }

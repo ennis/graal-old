@@ -7,7 +7,6 @@
 #include <graal/access_mode.hpp>
 #include <graal/detail/named_object.hpp>
 #include <graal/detail/resource.hpp>
-#include <graal/detail/task.hpp>
 #include <graal/errors.hpp>
 #include <graal/image_format.hpp>
 #include <graal/image_type.hpp>
@@ -243,6 +242,7 @@ class image final {
     template<image_type Type, image_usage Usage, access_mode AccessMode, bool HostVisible>
     friend class image_accessor_base;
     friend class handler;
+    friend class attachment;
 
 public:
     using impl_t = detail::image_impl;

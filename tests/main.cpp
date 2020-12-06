@@ -470,12 +470,6 @@ public:
         vao = vao_builder.get_vertex_array();
     }
 
-    void render(queue& q) {
-        q.render_pass("background render", [](handler& h) {
-            // accessors here
-        });
-    }
-
 private:
     buffer<vertex_2d> vertices;
     vertex_array_handle vao;
@@ -600,10 +594,16 @@ int main() {
         // ->
         auto next_image = swapchain.acquire_next_image();
 
-        q.render_pass([&](handler& h) {
-            //h.clear_color_image();  //
-            DRAW_SWAPCHAIN(next_image)
-        });
+        {
+            attachment color[] = {
+                    attachment{next_image, attachment_load_op::clear, attachment_store_op::store}};
+            render_pass_desc pass_desc{
+                    .color_attachments = color,
+            };
+
+            q.render_pass(pass_desc, [&](handler& h) { DRAW_SWAPCHAIN(next_image) });
+        }
+
         q.present(std::move(next_image));
         q.enqueue_pending_tasks();
 
@@ -621,10 +621,7 @@ int main() {
 void draw_frame(graal::queue& q) {
 }
 
-namespace graal {
-
-
-}  // namespace graal
+namespace graal {}  // namespace graal
 
 //=============================================================================
 void test_case_1(graal::queue& q) {
@@ -641,9 +638,23 @@ void test_case_1(graal::queue& q) {
     VIMG(J)
     VIMG(K)
 
-    q.render_pass("T0", [&](handler& h) { DRAW(A); });
+    {
+        attachment color[] = {attachment{A, attachment_load_op::clear, attachment_store_op::store}};
+        render_pass_desc pass_desc{
+                .color_attachments = color,
+        };
 
-    q.render_pass("T1", [&](handler& h) { DRAW(B) });
+        q.render_pass("T0", pass_desc, [&](handler& h) {});
+    }
+
+    {
+        attachment color[] = {attachment{B, attachment_load_op::clear, attachment_store_op::store}};
+        render_pass_desc pass_desc{
+                .color_attachments = color,
+        };
+
+        q.render_pass("T1", pass_desc, [&](handler& h) {});
+    }
 
     q.compute_pass("T2", [&](handler& h) {
         COMPUTE_READ(A)
@@ -652,7 +663,14 @@ void test_case_1(graal::queue& q) {
         COMPUTE_WRITE(D2)
     });
 
-    q.render_pass("T3", [&](handler& h) { DRAW(C) });
+    {
+        attachment color[] = {attachment{C, attachment_load_op::clear, attachment_store_op::store}};
+        render_pass_desc pass_desc{
+                .color_attachments = color,
+        };
+
+        q.render_pass("T3", pass_desc, [&](handler& h) {});
+    }
 
     q.compute_pass("T4", [&](handler& h) {
         COMPUTE_READ(D2)
@@ -738,17 +756,25 @@ void test_aliasing_pipelining_conflicts(graal::queue& q) {
 
         // B must not alias with C or D
 
-        q.render_pass([&](handler& h) {
-            h.add_image_access(A, vk::AccessFlagBits::eShaderWrite,
-                    vk::PipelineStageFlagBits::eVertexShader,
-                    vk::PipelineStageFlagBits::eVertexShader, vk::ImageLayout::eGeneral);
-            h.add_image_access(B, vk::AccessFlagBits::eColorAttachmentWrite,
-                    vk::PipelineStageFlagBits::eColorAttachmentOutput,
-                    vk::PipelineStageFlagBits::eColorAttachmentOutput,
-                    vk::ImageLayout::eColorAttachmentOptimal);
-        });
+        {
+            attachment color[] = {
+                    attachment{B, attachment_load_op::clear, attachment_store_op::store}};
+            render_pass_desc pass_desc{
+                    .color_attachments = color,
+            };
 
-        q.render_pass([&](handler& h) {
+            q.render_pass(pass_desc, [&](handler& h) {
+                h.add_image_access(A, vk::AccessFlagBits::eShaderWrite,
+                        vk::PipelineStageFlagBits::eVertexShader,
+                        vk::PipelineStageFlagBits::eVertexShader, vk::ImageLayout::eGeneral);
+                h.add_image_access(B, vk::AccessFlagBits::eColorAttachmentWrite,
+                        vk::PipelineStageFlagBits::eColorAttachmentOutput,
+                        vk::PipelineStageFlagBits::eColorAttachmentOutput,
+                        vk::ImageLayout::eColorAttachmentOptimal);
+            });
+        }
+
+        q.compute_pass([&](handler& h) {
             h.add_image_access(A, vk::AccessFlagBits::eShaderRead,
                     vk::PipelineStageFlagBits::eComputeShader,
                     vk::PipelineStageFlagBits::eComputeShader, vk::ImageLayout::eGeneral);
@@ -758,7 +784,7 @@ void test_aliasing_pipelining_conflicts(graal::queue& q) {
                     vk::PipelineStageFlagBits::eComputeShader, vk::ImageLayout::eGeneral);
         });
 
-        q.render_pass([&](handler& h) {
+        q.compute_pass([&](handler& h) {
             h.add_image_access(C, vk::AccessFlagBits::eShaderRead,
                     vk::PipelineStageFlagBits::eComputeShader,
                     vk::PipelineStageFlagBits::eComputeShader, vk::ImageLayout::eGeneral);

@@ -1,6 +1,7 @@
 #pragma once
 #include <graal/device.hpp>
 #include <graal/range.hpp>
+#include <graal/detail/swapchain_impl.hpp>
 
 #include <memory>
 #include <vulkan/vulkan.hpp>
@@ -9,6 +10,7 @@ namespace graal {
 
 namespace detail {
 class queue_impl;
+class swapchain_image_impl;
 class swapchain_impl;
 }  // namespace detail
 
@@ -16,6 +18,7 @@ class swapchain_impl;
 class swapchain_image {
     friend class swapchain;
     friend class handler;
+    friend class attachment;
     friend class detail::queue_impl;
 
 public:

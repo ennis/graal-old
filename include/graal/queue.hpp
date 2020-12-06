@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <graal/access_mode.hpp>
+#include <graal/render_pass.hpp>
 #include <graal/buffer.hpp>
 #include <graal/detail/image_resource.hpp>
 #include <graal/detail/named_object.hpp>
@@ -111,6 +112,8 @@ struct queue_properties {
     int max_batches_in_flight = 1;
 };
 
+
+
 /// @brief
 class queue {
 public:
@@ -120,31 +123,10 @@ public:
     /// @tparam F
     /// @param f
     template<typename F>
-    void render_pass(F f) {
-        schedule(typeid(f).name(), detail::task_type::render_pass, f);
-    }
-    template<typename F>
-    void render_pass(std::string_view name, F f) {
-        schedule(name, detail::task_type::render_pass, f);
+    void render_pass(const render_pass_desc& desc, F f) {
+        render_pass("", desc, std::move(f));
     }
 
-    /// @brief Schedule a compute pass
-    /// @tparam F
-    /// @param f
-    template<typename F>
-    void compute_pass(F f) {
-        schedule(typeid(f).name(), detail::task_type::compute_pass, f);
-    }
-    template<typename F>
-    void compute_pass(std::string_view name, F f) {
-        schedule(name, detail::task_type::compute_pass, f);
-    }
-
-    void enqueue_pending_tasks();
-
-    void present(swapchain_image&& image);
-
-private:
     /// @brief
     /// @tparam F
     /// @param f
@@ -154,14 +136,34 @@ private:
     /// (a task might be partially constructed), but no resource is leaked.
     /// In reasonable programs, the callback probably should not throw exceptions.
     template<typename F>
-    void schedule(std::string_view name, detail::task_type type, F f) {
-        // create task
-        auto& task = create_task(name);
-        handler h{*impl_, task};
+    void render_pass(std::string_view name, const render_pass_desc& desc, F f) {
+        auto& task = create_render_pass_task(name, desc);
+        handler h{ *impl_, task };
         f(h);
     }
 
-    [[nodiscard]] detail::task& create_task(std::string_view name) noexcept;
+    /// @brief Schedule a compute pass
+    /// @tparam F
+    /// @param f
+    template<typename F>
+    void compute_pass(F f) {
+        compute_pass("", std::move(f));
+    }
+
+    template<typename F>
+    void compute_pass(std::string_view name, F f) {
+        auto& task = create_compute_pass_task(name);
+        handler h{ *impl_, task };
+        f(h);
+    }
+
+    void enqueue_pending_tasks();
+
+    void present(swapchain_image&& image);
+
+private:
+    [[nodiscard]] detail::task& create_render_pass_task(std::string_view name, const render_pass_desc& rpd) noexcept;
+    [[nodiscard]] detail::task& create_compute_pass_task(std::string_view name) noexcept; 
 
     std::shared_ptr<detail::queue_impl> impl_;
 };

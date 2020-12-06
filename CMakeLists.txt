@@ -59,7 +59,7 @@ set(HEADERS
     "include/graal/detail/recycler.hpp"
     "include/graal/detail/swapchain_impl.hpp"
     "include/graal/detail/sequence_number.hpp"
-    "include/graal/detail/command_buffer_pool.hpp" "include/graal/queue_class.hpp" "include/graal/detail/scheduler.hpp")
+    "include/graal/detail/command_buffer_pool.hpp" "include/graal/queue_class.hpp" "include/graal/detail/scheduler.hpp" "include/graal/render_pass.hpp")
 
 set(SOURCES
     "src/queue.cpp"
