@@ -1110,6 +1110,7 @@ struct schedule_ctx {
                         .subresourceRange = subresource_range });
                 image_memory_barriers_temporaries.push_back(tmp_index);
                 num_image_memory_barriers++;
+
             } else if (tmp.resource->type() == resource_type::buffer) {
                 buffer_memory_barriers.push_back(
                         vk::BufferMemoryBarrier{.srcAccessMask = tmp.access_flags,
@@ -1460,7 +1461,8 @@ struct schedule_ctx {
 
         for (size_t i = 0; i < temporaries.size(); ++i) {
             if (allocation_map[i] != (size_t)-1) {
-                temporaries[i].resource->as_virtual_resource().bind_memory(device, allocations[i].alloc, allocations[i].alloc_info);
+                const auto i_alloc = allocation_map[i];
+                temporaries[i].resource->as_virtual_resource().bind_memory(device, allocations[i_alloc].alloc, allocations[i_alloc].alloc_info);
             }
         }
     }

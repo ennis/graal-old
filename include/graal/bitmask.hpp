@@ -41,7 +41,7 @@ namespace graal {
     }                                                                                         \
                                                                                               \
     inline constexpr bool operator!(T v) noexcept { /* return left ^= right */                \
-        return v != T{};                                                                      \
+        return v == T{};                                                                      \
     }                                                                                         \
                                                                                               \
     [[nodiscard]] inline constexpr bool bitmask_includes_all(                                 \
