@@ -745,6 +745,31 @@ depth_attachment{B, attachment_load_op::, attachment_store_op::dont_care };
 
 ```
 
+## Accessing resources
+Issue: it's annoying to access resources and properties of resources (need casts and whatever).
+There are three types:
+
+- buffer_impl: for (virtual) buffers
+- image_impl: for (virtual) images
+- swapchain_image_impl: for swapchain images
+
+All derive from resource. buffer_impl and image_impl derive from virtual_resource.
+Problem: to get the format of an image, must cast. Annoying because there's no common base class for swapchain images and regular images.
+
+Proposal: put more things in the base
+```
+struct resource {
+	resource_type type;
+	union {
+		VkImage image;
+		VkBuffer buffer;
+	} object;
+
+}
+```
+
+Other proposal: a base class for image.
+Issue: multiple-inheritance necessary with virtual_resource.
 
 ## Log
 28/11 : pipeline state tracking and "queue classes". Can deduce execution and memory dependencies.
@@ -758,3 +783,5 @@ depth_attachment{B, attachment_load_op::, attachment_store_op::dont_care };
 	- removed last_write_access. need only last_access and whether the last access was a read or a write
 	- moved resource tracking variables (lastXXX) from resource to an array in schedule_ctx (more tightly-packed in memory). 
 5/12 : submissions
+
+

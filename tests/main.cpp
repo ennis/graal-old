@@ -359,35 +359,34 @@ pipeline_states init_pipeline(device& dev) {
     };
 }
 
-#define CIMG(NAME)                                             \
-    image NAME{image_format::r16g16_sfloat, range{1280, 720}}; \
+inline constexpr image_usage default_image_usage =
+        image_usage::color_attachment | image_usage::sampled | image_usage::input_attachment | image_usage::storage | image_usage::transfer_dst;
+
+#define CIMG(NAME)                                                                  \
+    image NAME{default_image_usage, image_format::r16g16_sfloat, range{1280, 720}}; \
     NAME.set_name(#NAME);
 
-#define VIMG(NAME)                                                            \
-    image NAME{virtual_image, image_format::r16g16_sfloat, range{1280, 720}}; \
+#define VIMG(NAME)                                                                  \
+    image NAME{default_image_usage, image_format::r16g16_sfloat, range{1280, 720}}; \
     NAME.set_name(#NAME);
 
-#define COMPUTE_READ(img)                                                              \
-    h.add_image_access(img, vk::AccessFlagBits::eShaderRead,                           \
-            vk::PipelineStageFlagBits::eComputeShader, {}, vk::ImageLayout::eGeneral); \
-    img.add_usage_flags(vk::ImageUsageFlagBits::eStorage);
+#define COMPUTE_READ(img)                                    \
+    h.add_image_access(img, vk::AccessFlagBits::eShaderRead, \
+            vk::PipelineStageFlagBits::eComputeShader, {}, vk::ImageLayout::eGeneral);
 
-#define COMPUTE_WRITE(img)                                                         \
-    h.add_image_access(img, vk::AccessFlagBits::eShaderWrite, {},                  \
-            vk::PipelineStageFlagBits::eComputeShader, vk::ImageLayout::eGeneral); \
-    img.add_usage_flags(vk::ImageUsageFlagBits::eStorage);
+#define COMPUTE_WRITE(img)                                        \
+    h.add_image_access(img, vk::AccessFlagBits::eShaderWrite, {}, \
+            vk::PipelineStageFlagBits::eComputeShader, vk::ImageLayout::eGeneral);
 
 #define SAMPLE(img)                                                                                \
     h.add_image_access(img, vk::AccessFlagBits::eShaderRead,                                       \
             vk::PipelineStageFlagBits::eVertexShader | vk::PipelineStageFlagBits::eFragmentShader, \
-            {}, vk::ImageLayout::eShaderReadOnlyOptimal);                                          \
-    img.add_usage_flags(vk::ImageUsageFlagBits::eStorage);
+            {}, vk::ImageLayout::eShaderReadOnlyOptimal);
 
 #define DRAW(img)                                                          \
     h.add_image_access(img, vk::AccessFlagBits::eColorAttachmentWrite, {}, \
             vk::PipelineStageFlagBits::eColorAttachmentOutput,             \
-            vk::ImageLayout::eColorAttachmentOptimal);                     \
-    img.add_usage_flags(vk::ImageUsageFlagBits::eColorAttachment);
+            vk::ImageLayout::eColorAttachmentOptimal);
 
 #define DRAW_SWAPCHAIN(img)                                                                      \
     h.add_image_access(img, vk::AccessFlagBits::eColorAttachmentWrite, vk::PipelineStageFlags{}, \
@@ -431,7 +430,7 @@ struct vertex_traits<vertex_2d> {
 /// @brief Application state
 class app_state {
 public:
-    app_state() {
+    app_state() : vertices{buffer_usage::vertex_buffer} {
         reload_shaders();
     }
 
@@ -462,7 +461,7 @@ public:
                 {{left, bottom}, {0.0, 1.0}}, {{left, bottom}, {0.0, 1.0}},
                 {{right, top}, {1.0, 0.0}}, {{right, bottom}, {1.0, 1.0}}};
 
-        vertices = buffer{std::span{data}};
+        vertices = buffer{buffer_usage::vertex_buffer, std::span{data}};
 
         // build VAO for 2D vertices
         vertex_array_builder vao_builder{};

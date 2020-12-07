@@ -2,6 +2,7 @@
 #include <graal/detail/resource.hpp>
 #include <graal/device.hpp>
 #include <graal/range.hpp>
+#include <graal/image_format.hpp>
 
 #include <memory>
 #include <vulkan/vulkan.hpp>
@@ -26,24 +27,32 @@ public:
         return swapchain_;
     }
 
+    [[nodiscard]] image_format format() const noexcept {
+        return format_;
+    }
+
     [[nodiscard]] static std::shared_ptr<swapchain_image_impl> acquire_next_image(
             std::shared_ptr<swapchain_impl> impl);
 
 private:
     device device_;
     vk::SwapchainKHR swapchain_;
+    image_format format_;
     std::vector<vk::Image> images_;
 };
 
 //-----------------------------------------------------------------------------
-class swapchain_image_impl : public resource {
+class swapchain_image_impl : public image_resource {
     friend class swapchain_impl;
 
 public:
     swapchain_image_impl(
             std::shared_ptr<detail::swapchain_impl> swapchain, vk::Image image, uint32_t index) :
-        resource{resource_type::swapchain_image},
-        swapchain_{std::move(swapchain)}, image_{image}, index_{index} {
+        image_resource{resource_type::swapchain_image},
+        swapchain_{std::move(swapchain)}, index_{index} 
+    {
+        image_resource::image = image; 
+        image_resource::format = swapchain_->format();
     }
 
     [[nodiscard]] uint32_t index() const noexcept {
@@ -51,7 +60,7 @@ public:
     }
 
     [[nodiscard]] vk::Image get_vk_image() const noexcept {
-        return image_;
+        return image;
     }
 
     [[nodiscard]] vk::SwapchainKHR get_vk_swapchain() const noexcept {
@@ -60,7 +69,6 @@ public:
 
 private:
     std::shared_ptr<detail::swapchain_impl> swapchain_;
-    vk::Image image_;
     uint32_t index_;
 };
 

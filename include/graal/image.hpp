@@ -37,8 +37,8 @@ namespace detail {
 inline constexpr allocation_flags get_allocation_flags(
         bool host_visible, const image_properties& props) noexcept {
     allocation_flags f{};
-    if (props.aliasable) { f |= allocation_flag::aliasable; }
-    if (host_visible) { f |= allocation_flag::host_visible; }
+    if (props.aliasable) { f |= allocation_flags::aliasable; }
+    if (host_visible) { f |= allocation_flags::host_visible; }
     return f;
 }
 
@@ -84,23 +84,27 @@ inline constexpr vk::SampleCountFlagBits get_vk_sample_count(unsigned samples) {
 // TODO: should we pass the device to the constructor, or only when first using
 // the object?
 
-class image_impl : public virtual_resource {
+class image_impl : public image_resource, public virtual_resource {
 public:
-    image_impl(image_type type, allocation_flags flags) :
-        virtual_resource{resource_type::image}, type_{type}, allocation_flags_{flags} {
+    image_impl(image_type type, image_usage usage, allocation_flags flags) :
+        image_resource{resource_type::image}, type_{type}, usage_{usage}, allocation_flags_{flags} {
     }
-    image_impl(image_type type, image_format format, allocation_flags flags) :
-        virtual_resource{resource_type::image}, type_{type}, format_{format}, allocation_flags_{
-                                                                                      flags} {
-    }
-    image_impl(image_type type, range<3> size, allocation_flags flags) :
-        virtual_resource{resource_type::image}, type_{type}, size_{size}, allocation_flags_{flags} {
-    }
-
-    image_impl(image_type type, image_format format, range<3> size, allocation_flags flags) :
-        virtual_resource{resource_type::image}, type_{type}, format_{format}, size_{size},
+    image_impl(image_type type, image_usage usage, image_format format, allocation_flags flags) :
+        image_resource{resource_type::image}, type_{type}, usage_{usage}, format_{format},
         allocation_flags_{flags} {
     }
+    image_impl(image_type type, image_usage usage, range<3> size, allocation_flags flags) :
+        image_resource{resource_type::image}, type_{type}, usage_{usage}, size_{size},
+        allocation_flags_{flags} {
+    }
+
+    image_impl(image_type type, image_usage usage, image_format format, range<3> size,
+            allocation_flags flags) :
+        image_resource{resource_type::image},
+        type_{type}, usage_{usage}, format_{format}, size_{size}, allocation_flags_{flags} {
+    }
+
+    ~image_impl();
 
     //-------------------------------------------------------
     void set_size(const range<3>& s) {
@@ -190,27 +194,25 @@ public:
         return has_size() && has_format();
     }
 
-    void add_usage_flags(vk::ImageUsageFlags flags) noexcept {
+    void add_usage(image_usage usage) noexcept {
         // behavior undefined if image already created
-        usage_ = usage_ | flags;
+        usage_ |= usage;
     }
 
-    vk::Image get_vk_image(device& dev);
+    // Creates the VkImage without binding memory
+    vk::Image get_vk_image(device_impl_ptr dev);
 
     allocation_requirements get_allocation_requirements(device_impl_ptr device) override;
 
     /// @brief See resource::bind_memory
     void bind_memory(device_impl_ptr device, VmaAllocation allocation,
-            VmaAllocationInfo allocation_info) override;
-
-    // Creates the VkImage without binding memory
-    vk::Image get_unbound_vk_image(device_impl_ptr dev);
+            const VmaAllocationInfo& allocation_info) override;
 
 protected:
-
     device_impl_ptr device_impl_;
     image_type type_;
-    allocation_flags allocation_flags_;
+    image_usage usage_{};  // can add usages until the image is created
+    allocation_flags allocation_flags_{};
     std::optional<range<3>> size_;
     std::optional<image_format> format_;
     std::optional<unsigned> samples_;  // multisample count
@@ -219,8 +221,6 @@ protected:
     vk::Image image_;  // nullptr if not created yet
     VmaAllocation allocation_;  // nullptr if not allocated yet
     VmaAllocationInfo allocation_info_;  // allocation info
-    vk::ImageUsageFlags usage_;  // vulkan image usage flags; can add usages until
-            // the image is created
 };
 
 }  // namespace detail
@@ -251,29 +251,37 @@ public:
     static constexpr int Extents = num_extents(Type);
 
     image(const image_properties& props = {}) :
-        impl_{std::make_shared<impl_t>(Type, detail::get_allocation_flags(HostVisible, props))} {
-        apply_image_properties(props);
-    }
-
-    image(image_format format, const image_properties& props = {}) :
         impl_{std::make_shared<impl_t>(
-                Type, format, detail::get_allocation_flags(HostVisible, props))} {
+                Type, {}, detail::get_allocation_flags(HostVisible, props))} {
         apply_image_properties(props);
     }
 
-    image(image_size_t size, const image_properties& props = {}) :
+    image(image_usage usage, const image_properties& props = {}) :
         impl_{std::make_shared<impl_t>(
-                Type, size, detail::get_allocation_flags(HostVisible, props))} {
+                Type, usage, detail::get_allocation_flags(HostVisible, props))} {
         apply_image_properties(props);
     }
 
-    image(image_format format, image_size_t size, const image_properties& props = {}) :
-        impl_{std::make_shared<impl_t>(Type, format, detail::extend_size(size),
+    image(image_usage usage, image_format format, const image_properties& props = {}) :
+        impl_{std::make_shared<impl_t>(
+                Type, usage, format, detail::get_allocation_flags(HostVisible, props))} {
+        apply_image_properties(props);
+    }
+
+    image(image_usage usage, image_size_t size, const image_properties& props = {}) :
+        impl_{std::make_shared<impl_t>(
+                Type, usage, size, detail::get_allocation_flags(HostVisible, props))} {
+        apply_image_properties(props);
+    }
+
+    image(image_usage usage, image_format format, image_size_t size,
+            const image_properties& props = {}) :
+        impl_{std::make_shared<impl_t>(Type, usage, format, detail::extend_size(size),
                 detail::get_allocation_flags(HostVisible, props))} {
         apply_image_properties(props);
     }
 
-    image(virtual_tag_t, const image_properties& props = {}) :
+    /*image(virtual_tag_t, const image_properties& props = {}) :
         impl_{std::make_shared<impl_t>(Type, detail::get_allocation_flags(HostVisible, props))} {
         apply_image_properties(props);
     }
@@ -295,7 +303,7 @@ public:
         impl_{std::make_shared<impl_t>(Type, format, detail::extend_size(size),
                 detail::get_allocation_flags(HostVisible, props))} {
         apply_image_properties(props);
-    }
+    }*/
 
     /// @brief
     /// @param size
@@ -323,10 +331,8 @@ public:
 
     /// @brief Combines the specified usage with the current image usage flags.
     /// @param usage
-    /// You don't need to call this function when using images with accessors,
-    /// as the accessors will set automatically set proper image flags.
-    void add_usage_flags(vk::ImageUsageFlags usage) {
-        impl_->add_usage_flags(usage);
+    void add_usage(image_usage usage) {
+        impl_->add_usage(usage);
     }
 
     /// @brief
@@ -430,34 +436,19 @@ private:
 using image_1d = image<image_type::image_1d>;
 using image_2d = image<image_type::image_2d>;
 using image_3d = image<image_type::image_3d>;
-/*using image_1d_array = image<image_type::image_1d_array>;
-using image_2d_array = image<image_type::image_2d_array>;
-using image_cube_map = image<image_type::image_cube_map>;
-using multisample_image_2d = image<image_type::image_2d_multisample>;
-using multisample_image_2d_array =
-    image<image_type::image_2d_multisample_array>;*/
-
-/*
-template <image_dimensions Dimensions>
-using virtual_image = image<Dimensions, false>;
-using virtual_image_1d = image<image_dimensions::image_1d, false>;
-using virtual_image_2d = image<image_dimensions::image_2d, false>;
-using virtual_image_3d = image<image_dimensions::image_3d, false>;
-using virtual_image_1d_array = image<image_dimensions::image_1d_array, false>;
-using virtual_image_2d_array = image<image_dimensions::image_2d_array, false>;
-using virtual_image_cube_map = image<image_dimensions::image_cube_map, false>;*/
 
 // deduction guides
 
 // clang-format off
-template <int D> image(range<D>)
+template <int D> image(image_usage usage, range<D>)
     -> image<extents_to_image_type(D), true>;
-template <int D> image(range<D>, const image_properties&)
+template <int D> image(image_usage usage, range<D>, const image_properties&)
     -> image<extents_to_image_type(D), true>;
-template <int D> image(image_format, range<D>)
+template <int D> image(image_usage usage, image_format, range<D>)
     -> image<extents_to_image_type(D), true>;
-template <int D> image(image_format, range<D>, const image_properties&)       
+template <int D> image(image_usage usage, image_format, range<D>, const image_properties&)
     -> image<extents_to_image_type(D), true>;
+/*
 template <int D> image(virtual_tag_t, range<D>)
     -> image<extents_to_image_type(D), false>;
 template <int D> image(virtual_tag_t, range<D>, const image_properties&)
@@ -466,6 +457,7 @@ template <int D> image(virtual_tag_t, image_format, range<D>)
     -> image<extents_to_image_type(D), false>;
 template <int D> image(virtual_tag_t, image_format, range<D>, const image_properties&)
     -> image<extents_to_image_type(D), false>;
+*/
 // clang-format on
 
 }  // namespace graal

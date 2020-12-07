@@ -18,10 +18,16 @@ create_vk_image_with_allocation(device                     device,
   // vmaCreateImage(allocator, &create_info, )
 }*/
 
+image_impl::~image_impl() {
+    if (image_resource::image) {
+        device_impl_->get_vk_device().destroyImage(image_resource::image);
+    }
+}
+
 /// @brief See resource::bind_memory
 void image_impl::bind_memory(
-        device_impl_ptr device, VmaAllocation allocation, VmaAllocationInfo allocation_info) {
-    auto vk_image = get_unbound_vk_image(device);
+        device_impl_ptr device, VmaAllocation allocation, const VmaAllocationInfo& allocation_info) {
+    auto vk_image = get_vk_image(device);
     auto vk_device = device->get_vk_device();
     allocation_ = allocation;
     allocation_info_ = allocation_info;
@@ -31,14 +37,13 @@ void image_impl::bind_memory(
 
 allocation_requirements image_impl::get_allocation_requirements(device_impl_ptr dev) {
     const auto vk_device = dev->get_vk_device();
-    const auto vk_buffer = get_unbound_vk_image(dev);
+    const auto vk_buffer = get_vk_image(dev);
     const vk::MemoryRequirements mem_req = vk_device.getImageMemoryRequirements(vk_buffer);
-    return allocation_requirements{.flags = allocation_flags_,
-            .memreq = mem_req };
+    return allocation_requirements{.flags = allocation_flags_, .memreq = mem_req};
 }
 
 // Creates a VkImage without bound memory
-vk::Image image_impl::get_unbound_vk_image(device_impl_ptr dev) {
+vk::Image image_impl::get_vk_image(device_impl_ptr dev) {
     if (image_) {
         // resource already created
         return image_;
@@ -60,12 +65,16 @@ vk::Image image_impl::get_unbound_vk_image(device_impl_ptr dev) {
             .mipLevels = mip_levels,
             .arrayLayers = array_layers,
             .samples = get_vk_sample_count(samples),
-            .usage = usage_,
+            .usage = static_cast<vk::ImageUsageFlags>(static_cast<int>(usage_)),
     };
 
     auto vk_device = dev->get_vk_device();
     image_ = vk_device.createImage(create_info);
     device_impl_ = std::move(dev);
+
+    // set fields in image_resource
+    image_resource::image = image_;
+    image_resource::format = format_.value();
     return image_;
 }
 }  // namespace detail

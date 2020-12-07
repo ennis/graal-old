@@ -13,6 +13,8 @@
 #include <queue>
 #include <span>
 
+#include <future>
+
 namespace graal {
 namespace detail {
 namespace {
@@ -73,10 +75,10 @@ bool adjust_allocation_requirements(
 /// Also tracks the current layout and accesses during submission.
 struct temporary {
     /// @brief Constructs a temporary from an existing resource
-    /// @param device 
-    /// @param resource 
-    explicit temporary(resource_ptr r) : resource{ std::move(r) } {
-        type = resource->type();
+    /// @param device
+    /// @param resource
+    explicit temporary(resource_ptr r) : resource{std::move(r)} {
+        //type = resource->type();
         access_sn = resource->last_access;
         write_snn = resource->last_write;
         layout = resource->last_layout;
@@ -85,25 +87,21 @@ struct temporary {
     }
 
     void init_object(device_impl_ptr device) {
-        if (type == resource_type::image || type == resource_type::swapchain_image) {
-            object.image = resource->as_vk_image(device);
-        }
-        else {
-            object.buffer = resource->as_vk_buffer(device);
-        }
+        resource->realize(std::move(device));
     }
 
     /// @brief The resource
     resource_ptr resource;
-    resource_type type;
+    /*resource_type type;
     union {
         VkImage image = nullptr;
         VkBuffer buffer;
-    } object;   // vulkan handle to object, not created immediately
+    } object;  // vulkan handle to object, not created immediately*/
     std::array<serial_number, max_queues> access_sn;  // last access SN
-    submission_number write_snn;  // last write SN (a dummy one is first assigned when building the DAG)
+    submission_number
+            write_snn;  // last write SN (a dummy one is first assigned when building the DAG)
     vk::ImageLayout layout =
-        vk::ImageLayout::eUndefined;  // last known image layout, ignored for buffers
+            vk::ImageLayout::eUndefined;  // last known image layout, ignored for buffers
     vk::AccessFlags access_flags{};
     vk::PipelineStageFlags stages{};
 };
@@ -648,7 +646,7 @@ size_t queue_impl::get_resource_tmp_index(resource_ptr resource) {
     if (result.second) {
         // just inserted, create temporary
         const auto last_write = resource->last_write.serial;
-        // init temporary 
+        // init temporary
         batch_.temporaries.emplace_back(std::move(resource));
     }
     return result.first->second;
@@ -746,7 +744,6 @@ static void dump_set(bitset s) {
     }
 }
 
-
 struct image_memory_barrier {
     size_t resource_index;
     vk::AccessFlags src_access_mask;
@@ -782,23 +779,25 @@ struct submitted_task {
     size_t buffer_memory_barriers_offset;  // offset into the vector of buffer barriers
 
     bool needs_cmd_pipeline_barrier() const noexcept {
-        return src_stage_mask != vk::PipelineStageFlagBits::eTopOfPipe || dst_stage_mask != vk::PipelineStageFlagBits::eBottomOfPipe 
-            || num_buffer_memory_barriers != 0 || num_image_memory_barriers != 0;
+        return src_stage_mask != vk::PipelineStageFlagBits::eTopOfPipe
+               || dst_stage_mask != vk::PipelineStageFlagBits::eBottomOfPipe
+               || num_buffer_memory_barriers != 0 || num_image_memory_barriers != 0;
     }
 };
 
 struct device_memory_allocation {
     allocation_requirements req;
     VmaAllocation alloc;
+    VmaAllocationInfo alloc_info;
 };
 
 struct schedule_ctx {
     device_impl_ptr device;
-    queue_indices queues;    
+    queue_indices queues;
     std::span<task> tasks;
     std::span<temporary> temporaries;
-    
-    // --- scheduling state   
+
+    // --- scheduling state
     serial_number base_sn;  // serial number of the first task
     serial_number next_sn;  // serial number of the next task to be scheduled
     bitset done_tasks;  // set of submitted tasks
@@ -843,19 +842,19 @@ struct schedule_ctx {
     schedule_ctx(device_impl_ptr d, queue_indices queues, serial_number base_sn,
             std::span<task> tasks, std::span<temporary> temporaries) :
         device{std::move(d)},
-        queues{queues}, base_sn{base_sn}, next_sn{base_sn}, tasks{tasks}, temporaries{temporaries} 
-    {
+        queues{queues}, base_sn{base_sn}, next_sn{base_sn}, tasks{tasks}, temporaries{temporaries} {
         const auto n_task = tasks.size();
         const auto n_tmp = temporaries.size();
         reachability = transitive_closure(tasks);
         done_tasks.resize(n_task, false);
         ready_tasks.resize(n_task, false);
         submitted_tasks.resize(n_task);
+        allocation_map.resize(n_tmp, (size_t)-1);
 
         // prepare resources
         for (size_t i = 0; i < n_tmp; ++i) {
             // reset the temporary last write serial used to build the DAG
-            temporaries[i].write_snn.serial = 0;    
+            temporaries[i].write_snn.serial = 0;
             // create the vulkan resource (without bound memory)
             temporaries[i].init_object(device);
         }
@@ -955,9 +954,10 @@ struct schedule_ctx {
         for (size_t i = 0; i < temporaries.size(); ++i) {
             fmt::print("{:<10} {} W={}:{} A={},{},{},{} L={} AM={} S={}\n",
                     temporaries[i].resource->name(), live[i] ? "live" : "dead",
-                    (uint64_t) temporaries[i].write_snn.queue, (uint64_t)temporaries[i].write_snn.serial,
-                    (uint64_t)temporaries[i].access_sn[0], (uint64_t)temporaries[i].access_sn[1],
-                    (uint64_t)temporaries[i].access_sn[2], (uint64_t)temporaries[i].access_sn[3],
+                    (uint64_t) temporaries[i].write_snn.queue,
+                    (uint64_t) temporaries[i].write_snn.serial,
+                    (uint64_t) temporaries[i].access_sn[0], (uint64_t) temporaries[i].access_sn[1],
+                    (uint64_t) temporaries[i].access_sn[2], (uint64_t) temporaries[i].access_sn[3],
                     layout_to_string_compact(temporaries[i].layout),
                     access_mask_to_string_compact(temporaries[i].access_flags),
                     pipeline_stages_to_string_compact(temporaries[i].stages));
@@ -970,23 +970,23 @@ struct schedule_ctx {
     /// @param tmp_index the index of the temporary to assign a memory block to
     void assign_device_memory(size_t tmp_index) {
         auto allocator = device->get_allocator();
-        auto& tmp0 = temporaries[tmp_index].resource;
+        auto r = temporaries[tmp_index].resource.get();
 
         // skip if it doesn't need allocation
-        if (!tmp0->is_virtual()) return;
-        if (tmp0->allocated) return;
+        if (!r->is_virtual() || r->allocated || allocation_map[tmp_index] != (size_t)-1) return;        
 
-        virtual_resource& vres = static_cast<virtual_resource&>(*tmp0);
-        const auto requirements = vres.get_allocation_requirements(device);
+        virtual_resource& vr = r->as_virtual_resource();
+
+        const auto requirements = vr.get_allocation_requirements(device);
 
         // resource became alive, if possible, alias with a dead
         // temporary, otherwise allocate a new one.
-        if (!(requirements.flags & allocation_flag::aliasable)) {
+        if (!(requirements.flags & allocation_flags::aliasable)) {
             allocations.push_back(device_memory_allocation{
                     .req = requirements,
                     .alloc = nullptr  // allocated later, as requirements might change
             });
-            allocation_map.push_back(allocations.size() - 1);
+            allocation_map[tmp_index] = allocations.size() - 1;
         } else {
             // whether we managed to find a dead resource to alias with
             bool aliased = false;
@@ -1033,89 +1033,115 @@ struct schedule_ctx {
     /// This function updates the required src_stage_flags and dst_stage_flags of pipeline barrier.
     /// It also updates the `buffer_memory_barriers` and `image_memory_barriers` members
     /// by appending the necessary memory barriers.
-    void memory_dependency(size_t resource_index, const resource_access_details& access,
+    void memory_dependency(size_t tmp_index, const resource_access_details& access,
             submission_number snn, std::array<serial_number, max_queues>& queue_syncs,
             std::array<vk::PipelineStageFlags, max_queues>& queue_syncs_wait_dst_stages,
             size_t& num_image_memory_barriers, size_t& num_buffer_memory_barriers,
-            vk::PipelineStageFlags& src_stage_flags, vk::PipelineStageFlags& dst_stage_flags) 
-    {
-        auto& r = temporaries[resource_index];
-        const bool writing = is_write_access(access.access_flags) || access.layout != r.layout;
+            vk::PipelineStageFlags& src_stage_flags, vk::PipelineStageFlags& dst_stage_flags) {
+        auto& tmp = temporaries[tmp_index];
+        const bool writing = is_write_access(access.access_flags) || access.layout != tmp.layout;
         const bool reading = is_read_access(access.access_flags);
 
         // --- is an execution barrier necessary for this access?
         if (writing) {
             for (size_t iq = 0; iq < max_queues; ++iq) {
                 // WA* hazard: need queue sync w.r.t. last accesses across ALL queues
-                queue_syncs[iq] = std::max(queue_syncs[iq], r.access_sn[iq]);
+                queue_syncs[iq] = std::max(queue_syncs[iq], tmp.access_sn[iq]);
                 queue_syncs_wait_dst_stages[iq] |= access.input_stage;
             }
         } else {
             // RAW hazard: need queue sync w.r.t last write
-            queue_syncs[r.write_snn.queue] =
-                    std::max(queue_syncs[r.write_snn.queue], r.write_snn.serial);
-            queue_syncs_wait_dst_stages[r.write_snn.queue] |= access.input_stage;
+            queue_syncs[tmp.write_snn.queue] =
+                    std::max(queue_syncs[tmp.write_snn.queue], tmp.write_snn.serial);
+            queue_syncs_wait_dst_stages[tmp.write_snn.queue] |= access.input_stage;
         }
 
-        src_stage_flags |= r.stages;
+        src_stage_flags |= tmp.stages;
         dst_stage_flags |= access.input_stage;
 
         // --- is a memory barrier necessary for this access?
         const bool needs_layout_transition =
-                r.layout != access.layout;  // yes, if layout is different
+                tmp.layout != access.layout;  // yes, if layout is different
         const bool visibility_hazard =
-                (r.access_flags & access.access_flags)
+                (tmp.access_flags & access.access_flags)
                 != access.access_flags;  // covers RAW hazards, and visibility across different access types
         const bool waw_hazard =
                 writing
                 && is_write_access(
-                        r.access_flags);  // covers WAW hazards across the same access type (writes must happen in order)
+                        tmp.access_flags);  // covers WAW hazards across the same access type (writes must happen in order)
 
         if (needs_layout_transition || visibility_hazard || waw_hazard) {
             // the resource access needs a memory barrier
-            if (r.type == resource_type::image
-                    || r.type == resource_type::swapchain_image) 
-            {
+            if (tmp.resource->type() == resource_type::image
+                    || tmp.resource->type() == resource_type::swapchain_image) {
                 // image barrier
+
+                // determine aspect mask
+                const auto format = tmp.resource->as_image().format;
+                const auto vk_image = tmp.resource->as_image().image;
+                assert(vk_image && "image not realized");
+
+                vk::ImageAspectFlags aspect_mask;
+                if (is_depth_only_format(format)) {
+                    aspect_mask = vk::ImageAspectFlagBits::eDepth;
+                } else if (is_stencil_only_format(format)) {
+                    aspect_mask = vk::ImageAspectFlagBits::eStencil;
+                } else if (is_depth_and_stencil_format(format)) {
+                    aspect_mask =
+                            vk::ImageAspectFlagBits::eDepth | vk::ImageAspectFlagBits::eStencil;
+                } else {
+                    aspect_mask = vk::ImageAspectFlagBits::eColor;
+                }
+                // TODO metadata? planes?
+
+                const vk::ImageSubresourceRange subresource_range = vk::ImageSubresourceRange{
+                          .aspectMask = aspect_mask,
+                                .baseMipLevel = 0,
+                                .levelCount = VK_REMAINING_MIP_LEVELS,
+                                .baseArrayLayer = 0,
+                                .layerCount = VK_REMAINING_ARRAY_LAYERS };
+
                 image_memory_barriers.push_back(vk::ImageMemoryBarrier{
-                        .srcAccessMask = r.access_flags,
+                        .srcAccessMask = tmp.access_flags,
                         .dstAccessMask = access.access_flags,
-                        .oldLayout = r.layout,
+                        .oldLayout = tmp.layout,
                         .newLayout = access.layout,
-                        .image = r.object.image,
-                });
-                image_memory_barriers_temporaries.push_back(resource_index);
+                        .image = tmp.resource->as_image().image,
+                        .subresourceRange = subresource_range });
+                image_memory_barriers_temporaries.push_back(tmp_index);
                 num_image_memory_barriers++;
-            } else if (r.type == resource_type::buffer) {
+            } else if (tmp.resource->type() == resource_type::buffer) {
                 buffer_memory_barriers.push_back(
-                        vk::BufferMemoryBarrier{.srcAccessMask = r.access_flags,
+                        vk::BufferMemoryBarrier{.srcAccessMask = tmp.access_flags,
                                 .dstAccessMask = access.access_flags,
-                                .buffer = r.object.buffer});
-                buffer_memory_barriers_temporaries.push_back(resource_index);
+                                .buffer = tmp.resource->as_buffer().buffer,
+                                .offset = 0,
+                                .size = VK_WHOLE_SIZE});
+                buffer_memory_barriers_temporaries.push_back(tmp_index);
                 num_buffer_memory_barriers++;
             }
         }
 
         // --- update what we know about the resource after applying the barriers
-        r.layout = access.layout;
-        r.stages = access.output_stage;
+        tmp.layout = access.layout;
+        tmp.stages = access.output_stage;
         if (writing) {
             // The resource is modified, either through an actual write or a layout transition.
             // The last version of the contents is visible only for the access flags given in this task.
-            r.write_snn = snn;
+            tmp.write_snn = snn;
             for (size_t iq = 0; iq < max_queues; ++iq) {
                 if (iq == snn.queue) {
-                    r.access_sn[iq] = snn.serial;
+                    tmp.access_sn[iq] = snn.serial;
                 } else {
-                    r.access_sn[iq] = 0;
+                    tmp.access_sn[iq] = 0;
                 }
             }
-            r.access_flags = access.access_flags;
+            tmp.access_flags = access.access_flags;
         } else {
             // Read-only access, a barrier has been inserted so that all writes to the resource are visible.
             // Combine with the previous access flags.
-            r.access_sn[snn.queue] = snn.serial;
-            r.access_flags |= access.access_flags;
+            tmp.access_sn[snn.queue] = snn.serial;
+            tmp.access_flags |= access.access_flags;
         }
     }
 
@@ -1281,6 +1307,7 @@ struct schedule_ctx {
         st.image_memory_barriers_offset = image_memory_barriers.size();
         st.buffer_memory_barriers_offset = buffer_memory_barriers.size();
         for (const auto& access : t.accesses) {
+            assign_device_memory(access.index);
             memory_dependency(access.index, access.details, snn, queue_syncs,
                     queue_syncs_wait_dst_stages, st.num_image_memory_barriers,
                     st.num_buffer_memory_barriers, st.src_stage_mask, st.dst_stage_mask);
@@ -1389,6 +1416,53 @@ struct schedule_ctx {
         fmt::print("\n");
         dump();
         done_tasks.set(task_index, true);
+    }
+
+    void bind_device_memory() {
+        const auto allocator = device->get_allocator();
+
+        fmt::print("Memory blocks:\n");
+        for (size_t i = 0; i < allocations.size(); ++i) {
+            const auto& alloc = allocations[i];
+            fmt::print("   MEM_{}: size={} \n"
+                "           align={}\n"
+                "           flags={}\n"
+                "           memory_type_bits={}\n",
+                i, alloc.req.memreq.size, alloc.req.memreq.alignment, static_cast<int>(alloc.req.flags),
+                alloc.req.memreq.memoryTypeBits);
+        }
+
+        fmt::print("\nMemory block assignments:\n");
+        for (size_t i = 0; i < temporaries.size(); ++i) {
+            if (allocation_map[i] != (size_t)-1) {
+                fmt::print("   {:02d} => MEM_{}\n", i, allocation_map[i]);
+            }
+            else {
+                fmt::print("   {:02d} => no memory\n", i);
+            }
+        }
+
+        for (auto& a : allocations) {
+           const VmaAllocationCreateInfo create_info{
+                .flags = 0,
+                .usage = VMA_MEMORY_USAGE_UNKNOWN,
+                .requiredFlags = 0,
+                .preferredFlags = 0,
+                .memoryTypeBits = 0,
+                .pool = VK_NULL_HANDLE,
+                .pUserData = nullptr
+            };
+
+           if (auto r = vmaAllocateMemory(allocator, &a.req.memreq, &create_info, &a.alloc, &a.alloc_info); r != VK_SUCCESS) {
+               fmt::print("vmaAllocateMemory failed, VkResult({})\n", r);
+            }
+        }
+
+        for (size_t i = 0; i < temporaries.size(); ++i) {
+            if (allocation_map[i] != (size_t)-1) {
+                temporaries[i].resource->as_virtual_resource().bind_memory(device, allocations[i].alloc, allocations[i].alloc_info);
+            }
+        }
     }
 
     size_t finish_pending_cb_batches() {
@@ -1524,6 +1598,7 @@ void queue_impl::enqueue_pending_tasks() {
             device_, queue_indices_, batch_.start_serial + 1, batch_.tasks, batch_.temporaries};
     while (ctx.schedule_next()) {}
     size_t cb_count = ctx.finish_pending_cb_batches();
+    ctx.bind_device_memory();
 
     // the state so far:
     // - `ctx.submitted_tasks` contains a list of all submitted tasks, in order
@@ -1552,17 +1627,17 @@ void queue_impl::enqueue_pending_tasks() {
 
         const auto command_buffer = thread_resources.cb_pool.fetch_command_buffer(vk_device);
         cb[st.cb_index] = command_buffer;
-        
+
         command_buffer.begin(vk::CommandBufferBeginInfo{});
 
         // emit the necessary barriers
 
         if (st.needs_cmd_pipeline_barrier()) {
-            command_buffer.pipelineBarrier(
-                st.src_stage_mask, st.dst_stage_mask, {}, 0, nullptr, st.num_buffer_memory_barriers,
-                ctx.buffer_memory_barriers.data() + st.buffer_memory_barriers_offset,
-                st.num_image_memory_barriers,
-                ctx.image_memory_barriers.data() + st.image_memory_barriers_offset);
+            command_buffer.pipelineBarrier(st.src_stage_mask, st.dst_stage_mask, {}, 0, nullptr,
+                    st.num_buffer_memory_barriers,
+                    ctx.buffer_memory_barriers.data() + st.buffer_memory_barriers_offset,
+                    st.num_image_memory_barriers,
+                    ctx.image_memory_barriers.data() + st.image_memory_barriers_offset);
         }
 
         if (t.type() == task_type::render_pass) {
@@ -1570,7 +1645,7 @@ void queue_impl::enqueue_pending_tasks() {
         } else if (t.type() == task_type::compute_pass) {
             if (t.detail.compute.callback) t.detail.compute.callback(command_buffer);
         }
-        
+
         command_buffer.end();
     }
 

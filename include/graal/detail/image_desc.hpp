@@ -1,5 +1,4 @@
 #pragma once
-#include <graal/texture.hpp>
 #include <graal/image_format.hpp>
 #include <graal/image_type.hpp>
 #include <graal/range.hpp>
@@ -37,19 +36,6 @@ struct image_desc {
   range<3>     size;
   int          num_mipmaps = 1;
   int          num_samples = 1;
-};
-
-/// @brief
-class image_resource {
-public:
-  image_resource(const image_desc &desc);
-  ~image_resource();
-
-  [[nodiscard]] GLuint get_gl_object() const { return tex_.get(); }
-
-private:
-  texture_handle tex_;
-  image_desc         desc_;
 };
 
 } // namespace graal::detail

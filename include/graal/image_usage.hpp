@@ -1,17 +1,20 @@
 #pragma once
-//#include <vulkan/vulkan.hpp>
+#include <graal/bitmask.hpp>
+#include <vulkan/vulkan.hpp>
 
 namespace graal {
 
-/// @brief How the resource is going to be accessed
 enum class image_usage {
-  sampled_image,
-  storage_image,
-  color_attachment,
-  depth_stencil_attachment,
-  pixel_transfer_source,      // == GPU image readback
-  pixel_transfer_destination, // == GPU image upload
-  presentation,		// vkQueuePresent
+    transfer_src = VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+    transfer_dst = VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+    sampled = VK_IMAGE_USAGE_SAMPLED_BIT,
+    storage = VK_IMAGE_USAGE_STORAGE_BIT,
+    color_attachment = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+    depth_stencil_attachment = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+    transient_attachment = VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT,
+    input_attachment = VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT,
 };
 
-} // namespace graal
+GRAAL_BITMASK(image_usage)
+
+}  // namespace graal

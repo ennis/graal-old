@@ -20,21 +20,24 @@ namespace detail {
 inline constexpr allocation_flags get_buffer_allocation_flags(
         bool host_visible, const buffer_properties& props) noexcept {
     allocation_flags f = {};
-    if (props.aliasable) { f |= allocation_flag::aliasable; }
-    if (host_visible) { f |= allocation_flag::host_visible; }
+    if (props.aliasable) { f |= allocation_flags::aliasable; }
+    if (host_visible) { f |= allocation_flags::host_visible; }
     return f;
 }
 
-class buffer_impl : public virtual_resource {
+class buffer_impl : public buffer_resource, public virtual_resource {
 public:
     // construct with unspecified size
-    buffer_impl(allocation_flags flags) :
-        virtual_resource{resource_type::buffer}, allocation_flags_{flags} {
+    buffer_impl(buffer_usage usage, allocation_flags flags) :
+        buffer_resource{}, usage_{usage}, allocation_flags_{flags} {
     }
 
     // construct uninitialized from size
-    buffer_impl(std::size_t byte_size, allocation_flags flags) :
-        virtual_resource{resource_type::buffer}, allocation_flags_{flags}, byte_size_{byte_size} {
+    buffer_impl(buffer_usage usage, std::size_t byte_size, allocation_flags flags) :
+        buffer_resource{}, usage_{usage}, allocation_flags_{flags}, byte_size_{byte_size} {
+    }
+
+    ~buffer_impl() {
     }
 
     void set_byte_size(std::size_t size) {
@@ -53,30 +56,23 @@ public:
         return byte_size_ != -1;
     }
 
-    vk::Buffer get_vk_buffer(device_impl_ptr dev) {
-        if (buffer_) { return buffer_; }
-        return get_unbound_vk_buffer(dev);
-    }
-
     void bind_memory(device_impl_ptr dev, VmaAllocation allocation,
-            VmaAllocationInfo allocation_info) override;
+        const VmaAllocationInfo& allocation_info) override;
 
     allocation_requirements get_allocation_requirements(device_impl_ptr dev) override;
 
-    void add_usage_flags(vk::BufferUsageFlags flags) noexcept {
-        // behavior undefined if buffer already created
-        usage_ = usage_ | flags;
+    void add_usage(buffer_usage usage) noexcept {
+        usage_ |= usage;
     }
 
-private:
-    vk::Buffer get_unbound_vk_buffer(device_impl_ptr dev);
+    vk::Buffer get_vk_buffer(device_impl_ptr dev);
 
-    allocation_flags allocation_flags_;
+private:
+    allocation_flags allocation_flags_{};
     std::size_t byte_size_ = -1;
     VmaAllocation allocation_ = nullptr;
     VmaAllocationInfo allocation_info_{};
-    vk::Buffer buffer_;
-    vk::BufferUsageFlags usage_;
+    buffer_usage usage_{};
 };
 
 }  // namespace detail
@@ -94,22 +90,29 @@ public:
     using impl_t = detail::buffer_impl;
     /// @brief
     buffer(const buffer_properties& props = {}) :
-        impl_{std::make_shared<impl_t>(detail::get_buffer_allocation_flags(HostVisible, props))} {
+        impl_{ std::make_shared<impl_t>({}, detail::get_buffer_allocation_flags(HostVisible, props)) } {
+    }
+
+    /// @brief
+    buffer(buffer_usage usage, const buffer_properties& props = {}) :
+        impl_{std::make_shared<impl_t>(
+                usage, detail::get_buffer_allocation_flags(HostVisible, props))} {
     }
 
     /// @brief
     /// @param size
-    buffer(std::size_t size, const buffer_properties& props = {}) :
+    buffer(buffer_usage usage, std::size_t size, const buffer_properties& props = {}) :
         impl_{std::make_shared<impl_t>(
-                size * sizeof(T), detail::get_buffer_allocation_flags(HostVisible, props))} {
+                usage, size * sizeof(T), detail::get_buffer_allocation_flags(HostVisible, props))} {
     }
 
     /// @brief
     /// @param data
     template<size_t Extent>
-    buffer(std::span<const T, Extent> data, const buffer_properties& props = {}) :
+    buffer(buffer_usage usage, std::span<const T, Extent> data,
+            const buffer_properties& props = {}) :
         impl_{std::make_shared<impl_t>(
-                data.size(), detail::get_buffer_allocation_flags(HostVisible, props))} {
+                usage, data.size(), detail::get_buffer_allocation_flags(HostVisible, props))} {
         // TODO allocate and upload data
     }
 
@@ -137,6 +140,6 @@ private:
 
 // deduction guides
 template<typename T>
-buffer(std::span<const T>) -> buffer<T, true>;
+buffer(buffer_usage, std::span<const T>) -> buffer<T, true>;
 
 }  // namespace graal

@@ -68,7 +68,8 @@ vk::Extent2D get_preferred_swap_extent(
 
 //-----------------------------------------------------------------------------
 swapchain_impl::swapchain_impl(device& device, range_2d framebuffer_size, vk::SurfaceKHR surface) :
-    device_{device} {
+    device_{device} 
+{
     resize(framebuffer_size, surface);
 }
 
@@ -125,6 +126,7 @@ void swapchain_impl::resize(range_2d framebuffer_size, vk::SurfaceKHR surface) {
 
     swapchain_ = new_swapchain;
     images_ = vk_device.getSwapchainImagesKHR(swapchain_);
+    format_ = static_cast<image_format>(static_cast<int>(swap_format.format));
 }
 
 std::shared_ptr<swapchain_image_impl> swapchain_impl::acquire_next_image(

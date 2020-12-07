@@ -9,7 +9,6 @@
 #include <graal/access_mode.hpp>
 #include <graal/render_pass.hpp>
 #include <graal/buffer.hpp>
-#include <graal/detail/image_resource.hpp>
 #include <graal/detail/named_object.hpp>
 #include <graal/detail/resource.hpp>
 #include <graal/device.hpp>
