@@ -771,6 +771,200 @@ struct resource {
 Other proposal: a base class for image.
 Issue: multiple-inheritance necessary with virtual_resource.
 
+### Resource usage flags
+They must be specified on creation (like width, height and format).
+
+```
+buffer<T> buf { buffer_usage_flag::uniform_buffer | buffer_usage_flag::vertex_buffer }
+```
+
+# Staging resources
+Buffers that can be mapped in CPU memory just after they are created, and that have a short life (only live in the batch).
+Currently, there's no way to tell that a buffer will only be used in the current batch. 
+It can be deduced during submission, but that's too late: the buffer must already be allocated before submission in order to 
+map it and upload data. And it's good to know that before allocation because then it can be allocated in a ring buffer.
+Possible designs:
+- `staging_buffer<T>`: not a resource, managed by the queue, mapped. Throws an exception when used outside of the current batch.
+	- meh
+- `queue.with_staging_buffer(<lambda>)`: same but the staging buffer cannot escape the lambda
+	- all uses of the staging buffer must happen in the lambda
+
+## Sub-problem: it's not clear what the "current batch" means
+- "until finish_batch is called"
+
+
+# Losing track of the goal for the task graph
+Focus on a simple goal, don't try to stuff more things into the task graph.
+- Don't lock into a design (e.g. accessors). Provide a minimal API that can do automatic scheduling and synchronization, 
+  but enable use of raw vulkan for the rest.
+   - this means that it should be possible to record command buffers manually, and access the vulkan objects directly
+   - set aside accessors for now
+- possibly simplify the image class? require full specialization
+- allow manual synchronization (e.g. for presentation)
+- don't put more things in the queue
+	- staging buffers? could be implemented out-of-queue, and then "recycled" at the end of the batch
+		- `staging_pool`
+		- problem: no tracking of the staging buffer 
+	- problem: functions that load image data now need both a ref to the queue and the staging pool. meh.
+
+Prioritize:
+- 
+
+# Remove partial specification of objects
+Adds complexity for no good reason. Create VkImage in constructor.
+Alternate syntaxes:
+```
+int main() {
+	graal::image { <usage>, <format>, {128,128,128}, image_properties { 
+		.mip_levels = 1,
+		.aliasable = true
+	}};
+}
+```
+
+`HostVisible` doesn't make much sense (it's always visible to the host one way or another, via copies to readback buffers).
+The template parameter is supposed to enable/disable some methods: which ones?
+Readback should always be possible.
+Mapping the memory is different though. 
+
+### Do we even care about the `image_type Type` template parameter?
+It only serves to enable `height` or `depth` if it's 2D or 3D. It doesn't provide any accessor methods that depend on the dimension, unlike the SYCL counterpart.
+It might be useful when binding the image to a descriptor, to statically check that the image has the correct dimensions, but it's not there yet. 
+And there will probably be other checks that need to be made at runtime anyway.
+
+
+# Issue: granularity of access tracking
+Until now, we assumed that we could track the resource states at the granularity of the resource, that is, track the state of the whole image,
+or the whole buffer, etc.
+But in practice, resources are not always accessed as a whole. For example, only a range of bytes inside a buffer needs to be accessed, or one mip level of an image, etc.
+This is a problem because since we're tracking resource states at a high granularity, we need to ensure that the whole resource is in a known state
+between passes instead of just the part that is accessed. This means performing a layout transition on all array layers and mip levels for images, 
+emitting a memory barrier for the whole buffer instead of just the accessed region, etc.
+
+Unfortunately, keeping track of accesses at a smaller granularity seems more complex. 
+For images, we need to maintain a different state for each subresource.
+For buffers, we need to maintain a dynamic list of ranges for each state.
+
+## Access tracking in existing render graph systems
+[Granite](https://github.com/Themaister/Granite/blob/master/renderer/render_graph.hpp) doesn't track accesses at subresource granularity.
+[Diligent](https://diligentgraphics.com/2018/12/09/resource-state-management/) allows transitions on subresource ranges, 
+but does not seem to track states per subresource (https://github.com/DiligentGraphics/DiligentCore/blob/36f11d692acd2272c4b15b34a3753f565310a074/Graphics/GraphicsEngineVulkan/src/DeviceContextVkImpl.cpp#L2245), so I'm not sure automatic transitions even work correctly.
+[V-EZ](https://github.com/GPUOpen-LibrariesAndSDKs/V-EZ/blob/master/Source/Core/PipelineBarriers.cpp) implements fine-grained resource tracking, which is impressive:
+
+	IMPLEMENTATION NOTES:    
+        This class handles tracking resource usages within the same command buffer for automated pipeline barrier insertion.
+
+        Buffer accesses are tracked per region with read-combining and write-combining done on adjacent 1D ranges.
+        Buffer accesses are stored in an STL map keyed by the buffer's memory address, offset and range.
+        Image accesses are tracked per array layer and mip level ranges.  Read and write combining are performed between 2D ranges where
+        the array layer is treated as the x-coordinate and mip level as the y-coordinate. If two accesses' rectangles intersect, then either
+        their regions are merged into a larger rectangle or a pipeline barrier is inserted if the accesses require it.
+        Images are stored in an STL unordered_map keyed by the image's memory address and value being a linked list of all accesses.
+    	
+        This implementation likely needs to be optimized and improved to handle the cases of random scattered accesses across images and buffers as
+        the process of merging and pipeline barrier insertion could become quite expensive.  However in the ideal case where accesses and linear and semi-coallesced,
+        the performance should not be an issue.
+
+
+
+## Aside: diminishing returns
+Fine-grained access tracking is probably too complex to implement and overkill. We need to be careful about diminishing returns
+when implementing such a thing, and think back on the original goal, which is to be able to easily write passes with vulkan:
+- be able to write self-contained passes that don't need to know about other passes
+	- without having to care about synchronization *with other passes*
+- abstract memory allocation and aliasing
+
+An important principle is that we should focus on making the *composition* of passes easy, but give low-level access *inside* a pass: basically,
+we control the *interface* between passes, but not the inside. This means that a pass can do whatever it want inside their command buffers, 
+as long as it honors the interface that it declared.
+
+Tracking accesses at the resource granularity is a compromise.
+However, this means that a task cannot request access to two layers of the same image with different layouts 
+(it must perform a transition inside the task).
+- Or rather, it can, and the queue will honor the request, but it will internally make sure that between passes all subresources
+  are in the same layout.
+
+Note: in this light, accessors seems like a complication: they are here to simultaneously register an access to a resource within a task
+*and* "safely" represent the actual use of the resource in the command buffer. But we don't provide such "safe" API for building command buffers yet, 
+and it is a massive undertaking.
+
+Example of "safe" API for command buffers:
+```cpp
+q.compute_pass([](handler& h) {
+	accessor a{img, ...};
+	accessor b{img2, ...};
+
+	h.commands([=](command_buffer& cb) {
+		cb.copy(a,b);
+	});
+});
+```
+
+But right now we just expose a vk::CommandBuffer:
+```cpp
+q.compute_pass([](handler& h) {
+	accessor a{img, ...};
+	accessor b{img2, ...};
+
+	h.commands([=](vk::CommandBuffer& cb) {
+		cb.copy(img,img2);
+	});
+});
+```
+So the accessors are never referenced again. The accessors and the whole outer lambda could be eliminated by explicitly passing
+a list of accesses in the compute pass:
+```cpp
+q.compute_pass( 
+	{access(img, ...), access(img, ...)},
+	[&](vk::CommmandBuffer&) {
+		//...
+	}
+)
+```
+
+That said, existing rendergraph APIs do use this pattern. (e.g. https://www.khronos.org/assets/uploads/developers/library/2019-reboot-develop-blue/SEED-EA_Rapid-Innovation-Using-Modern-Graphics_Apr19.pdf).
+So don't change it for now.
+
+
+
+## Tracking granularity is an implementation detail
+
+
+## Fine-grained access tracking
+Makes less sense to store it per-resource.
+
+A big list of "facts" about memory accesses. Each fact concerns a "region", which can be an image subresource range, or a slice of a buffer.
+The fact contains:
+- the last write serial
+- the last access serial (read or write)
+- the last pipeline stage accessing the resource
+- the last known image layout (for image subresources)
+- current memory access flags (in what kind of memory the results of the last operation is visible)
+
+The big issue is to update this list with new facts, given that the new regions *may overlap* regions of existing facts. 
+- Split/merge regions
+	- basically one tree per property, meh.
+	- this moves the state tracking outside of resources, through, which is nice
+
+
+## Submission refactor: access tracking v3
+- Remove tracking fields from resource classes, put them into the queue.
+- Remove per-resource access tracking, instead track accesses on _regions_ (parts of resource)
+	- as a start, only allow regions that span whole resources
+- to solve:
+	- lookup using a region (resource + subresource for images, buffer + range for buffers)
+	- what data structure for the "region->resource state" map?
+		- fast lookup, insertion and deletion
+		- don't care much about iteration
+		- entries should be trivially constructible and destructible
+	- when to remove entries from the map?
+- note that D3D12 doesn't have memory barriers for ranges of buffers (the whole buffer is transitioned)
+
+## The problem with presentation
+The main problem is that presentation doesn't support timeline semaphores, so it complicates
+synchronization when accessing a swapchain image.
+
+
 ## Log
 28/11 : pipeline state tracking and "queue classes". Can deduce execution and memory dependencies.
 29/11 : refactored scheduling

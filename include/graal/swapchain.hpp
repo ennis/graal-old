@@ -26,8 +26,7 @@ public:
     [[nodiscard]] vk::SwapchainKHR get_vk_swapchain() const noexcept;
 
 private:
-    swapchain_image(std::shared_ptr<detail::swapchain_image_impl> impl) : impl_{std::move(impl)} {
-    }
+    swapchain_image(std::shared_ptr<detail::swapchain_image_impl> impl) : impl_{std::move(impl)} {}
     std::shared_ptr<detail::swapchain_image_impl> impl_;
 };
 

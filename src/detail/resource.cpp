@@ -25,12 +25,4 @@ virtual_resource& resource::as_virtual_resource() {
     }
 }
 
-void resource::realize(device_impl_ptr device) {
-    if (type_ == resource_type::image) {
-        (void) static_cast<image_impl*>(this)->get_vk_image(std::move(device));
-    } else if (type_ == resource_type::buffer) {
-        (void) static_cast<buffer_impl*>(this)->get_vk_buffer(std::move(device));
-    }
-}
-
 }  // namespace graal::detail

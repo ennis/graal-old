@@ -13,20 +13,14 @@ include(FetchContent)
 include(ExternalDependencies)
 
 set(HEADERS
-    "include/graal/detail/gl_handle.hpp"
+    
     "include/graal/detail/dependent_false.hpp"
-    "include/graal/detail/image_impl.hpp"
     "include/graal/detail/named_object.hpp"
     "include/graal/detail/resource.hpp"
     "include/graal/detail/task.hpp"
     "include/graal/queue.hpp"
     "include/graal/image.hpp"
     "include/graal/accessor.hpp"
-    "include/graal/glad.h"
-    "include/graal/khrplatform.h"
-    "include/graal/texture.hpp"
-    "include/graal/gl_types.hpp"
-    "include/graal/gl_format_info.hpp"
     "include/graal/image_format.hpp"
     "include/graal/errors.hpp"
     "include/graal/visibility.hpp"
@@ -34,49 +28,35 @@ set(HEADERS
     "include/graal/access_mode.hpp"
     "include/graal/image_usage.hpp"
     "include/graal/image_type.hpp"
-    "include/graal/raw_buffer.hpp"
     "include/graal/event.hpp"
-    "include/graal/program.hpp"
     "include/graal/shader.hpp"
     "include/graal/bitmask.hpp"
-    "include/graal/vertex_array.hpp"
-    "include/graal/data_type.hpp"
-    "include/graal/sampler.hpp"
     # extensions
     "include/graal/ext/scene.hpp"
-    "include/graal/ext/vertex_array_cache.hpp"
     "include/graal/ext/vertex_traits.hpp"
     "include/graal/ext/geometry.hpp"
     "include/graal/device.hpp"
-    "include/graal/detail/vk_image.hpp" 
     "include/graal/graphics_pipeline.hpp"
     "include/graal/instance.hpp"
     "include/graal/swapchain.hpp"
     "include/graal/detail/recycler.hpp"
     "include/graal/detail/swapchain_impl.hpp"
     "include/graal/detail/sequence_number.hpp"
-    "include/graal/detail/command_buffer_pool.hpp" "include/graal/queue_class.hpp" "include/graal/detail/scheduler.hpp" "include/graal/render_pass.hpp")
+    "include/graal/detail/command_buffer_pool.hpp" 
+    "include/graal/queue_class.hpp" 
+    "include/graal/render_pass.hpp" "include/graal/detail/staging_pool.hpp" "include/graal/detail/pipeline_stage_tracker.hpp")
 
 set(SOURCES
     "src/queue.cpp"
     "src/buffer.cpp"
     "src/image.cpp"
     "src/image_format.cpp"
-    "src/gl_format_info.cpp"
-    "src/texture.cpp"
-    "src/glad.c"
-    "src/image_format.cpp"
     "src/errors.cpp"
-    "src/debug_output.cpp"
     "src/instance.cpp"
     "src/shader.cpp"
-    "src/detail/image_resource.cpp"
+    "src/detail/staging_pool.cpp"
     "src/detail/resource.cpp"
     "src/detail/task.cpp"
-    "src/raw_buffer.cpp"
-    "src/program.cpp"
-    "src/vertex_array.cpp"
-    "src/ext/scene.cpp"
     "src/device.cpp" 
     "src/swapchain.cpp" 
     "src/detail/swapchain_impl.cpp")
@@ -134,9 +114,9 @@ message(STATUS "Compiled shaders: ${COMPILED_SHADERS}")
 
 add_executable(
   graal-test  "tests/imgui_impl_glfw.cpp" "tests/imgui_impl_vulkan.cpp"
-             "tests/main.cpp" ${COMPILED_SHADERS})
+             "tests/main.cpp" ${COMPILED_SHADERS} "tests/load_image.cpp" "tests/load_image.hpp")
 
-target_link_libraries(graal-test PRIVATE graal Vulkan::Vulkan imgui glfw)
+target_link_libraries(graal-test PRIVATE graal Vulkan::Vulkan imgui glfw OpenImageIO::OpenImageIO)
 set_target_properties(
     graal-test PROPERTIES
     VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")

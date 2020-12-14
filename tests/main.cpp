@@ -1,35 +1,30 @@
 ﻿//#include <graal/accessor.hpp>
-#include <graal/glad.h>
 #include <graal/buffer.hpp>
-#include <graal/debug_output.hpp>
+#include <graal/ext/vertex_traits.hpp>
 #include <graal/image.hpp>
 #include <graal/instance.hpp>
 #include <graal/program.hpp>
 #include <graal/queue.hpp>
 #include <graal/shader.hpp>
-#include <graal/vertex_array.hpp>
 
 #include <vulkan/vulkan_win32.h>
-#include <graal/ext/vertex_array_cache.hpp>
-#include <graal/ext/vertex_traits.hpp>
 #include <vulkan/vulkan.hpp>
 
 #define IMGUI_IMPLEMENTATION
 #include <GLFW/glfw3.h>
-#include "imgui.h"
-#include "imgui_impl_glfw.h"
-#include "imgui_impl_vulkan.h"
-
-#include <glm/glm.hpp>
-
+#include <fmt/format.h>
 #include <array>
 #include <bit>
 #include <filesystem>
 #include <fstream>
+#include <glm/glm.hpp>
 #include <iostream>
 #include <iterator>
 #include <span>
-#include <typeindex>
+#include "imgui.h"
+#include "imgui_impl_glfw.h"
+#include "imgui_impl_vulkan.h"
+#include "load_image.hpp"
 
 using namespace graal;
 
@@ -360,14 +355,15 @@ pipeline_states init_pipeline(device& dev) {
 }
 
 inline constexpr image_usage default_image_usage =
-        image_usage::color_attachment | image_usage::sampled | image_usage::input_attachment | image_usage::storage | image_usage::transfer_dst;
+        image_usage::color_attachment | image_usage::sampled | image_usage::input_attachment
+        | image_usage::storage | image_usage::transfer_dst;
 
-#define CIMG(NAME)                                                                  \
-    image NAME{default_image_usage, image_format::r16g16_sfloat, range{1280, 720}}; \
+#define CIMG(NAME)                                                                       \
+    image NAME{dev, default_image_usage, image_format::r16g16_sfloat, range{1280, 720}}; \
     NAME.set_name(#NAME);
 
-#define VIMG(NAME)                                                                  \
-    image NAME{default_image_usage, image_format::r16g16_sfloat, range{1280, 720}}; \
+#define VIMG(NAME)                                                                       \
+    image NAME{dev, default_image_usage, image_format::r16g16_sfloat, range{1280, 720}}; \
     NAME.set_name(#NAME);
 
 #define COMPUTE_READ(img)                                    \
@@ -420,34 +416,23 @@ struct vertex_2d {
     std::array<float, 2> tex;
 };
 
-template<>
+/*template<>
 struct vertex_traits<vertex_2d> {
     static constexpr vertex_attribute attributes[] = {
             {data_type::float_, 2, offsetof(vertex_2d, pos)},
             {data_type::float_, 2, offsetof(vertex_2d, tex)}};
-};
+};*/
 
 /// @brief Application state
 class app_state {
 public:
-    app_state() : vertices{buffer_usage::vertex_buffer} {
+    app_state() {
         reload_shaders();
     }
 
     void reload_shaders() {
         auto vertex_src = read_text_file("data/shaders/background.vert");
         auto fragment_src = read_text_file("data/shaders/background.frag");
-
-        /*try {
-      auto vertex_shader = compile_shader(shader_stage::vertex, vertex_src,
-    std::cerr); auto fragment_shader = compile_shader(shader_stage::fragment,
-    fragment_src, std::cerr); bg_program = program_handle{}; bg_program =
-    create_program(vertex_shader.get(), fragment_shader.get(), 0, 0, 0,
-    std::cerr); } catch (const shader_compilation_error &err) {
-      fmt::print(stderr, "could not compile shader:\n {}\n", err.log());
-    } catch (const program_link_error &err) {
-      fmt::print(stderr, "could not link program:\n {}\n", err.log());
-    }*/
     }
 
     void setup() {
@@ -461,18 +446,15 @@ public:
                 {{left, bottom}, {0.0, 1.0}}, {{left, bottom}, {0.0, 1.0}},
                 {{right, top}, {1.0, 0.0}}, {{right, bottom}, {1.0, 1.0}}};
 
-        vertices = buffer{buffer_usage::vertex_buffer, std::span{data}};
-
         // build VAO for 2D vertices
-        vertex_array_builder vao_builder{};
-        vao_builder.set_attributes(0, 0, vertex_traits<vertex_2d>::attributes);
-        vao = vao_builder.get_vertex_array();
+        //vertex_array_builder vao_builder{};
+        //vao_builder.set_attributes(0, 0, vertex_traits<vertex_2d>::attributes);
+        //vao = vao_builder.get_vertex_array();
     }
 
 private:
-    buffer<vertex_2d> vertices;
-    vertex_array_handle vao;
-    program_handle bg_program;
+    //vertex_array_handle vao;
+    //program_handle bg_program;
 };
 
 int main() {
@@ -496,7 +478,6 @@ int main() {
         return -1;
     }
 
-    setup_debug_output();
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
@@ -563,6 +544,8 @@ int main() {
     test_parallel_branches(q);
     test_aliasing_pipelining_conflicts(q);
 
+    load_texture(q, project_root_path / "data/images/El4KUGDU0AAW64U.jpg");
+
     auto pp_state = init_pipeline(dev);
 
     //=======================================================
@@ -600,7 +583,8 @@ int main() {
                     .color_attachments = color,
             };
 
-            q.render_pass(pass_desc, [&](handler& h) { DRAW_SWAPCHAIN(next_image) });
+            q.render_pass(pass_desc, [&](handler& h) { DRAW_SWAPCHAIN(next_image)
+                return [](vk::RenderPass,vk::CommandBuffer) {}; });
         }
 
         q.present(std::move(next_image));
@@ -624,6 +608,7 @@ namespace graal {}  // namespace graal
 
 //=============================================================================
 void test_case_1(graal::queue& q) {
+    graal::device dev = q.get_device();
     VIMG(A)
     VIMG(B)
     VIMG(C)
@@ -643,7 +628,8 @@ void test_case_1(graal::queue& q) {
                 .color_attachments = color,
         };
 
-        q.render_pass("T0", pass_desc, [&](handler& h) {});
+        q.render_pass("T0", pass_desc,
+                [&](handler& h) { return [](vk::RenderPass, vk::CommandBuffer) {}; });
     }
 
     {
@@ -652,7 +638,8 @@ void test_case_1(graal::queue& q) {
                 .color_attachments = color,
         };
 
-        q.render_pass("T1", pass_desc, [&](handler& h) {});
+        q.render_pass("T1", pass_desc,
+                [&](handler& h) { return [](vk::RenderPass, vk::CommandBuffer) {}; });
     }
 
     q.compute_pass("T2", [&](handler& h) {
@@ -660,6 +647,7 @@ void test_case_1(graal::queue& q) {
         COMPUTE_READ(B)
         COMPUTE_WRITE(D1)
         COMPUTE_WRITE(D2)
+        return [](vk::CommandBuffer) {};
     });
 
     {
@@ -668,30 +656,42 @@ void test_case_1(graal::queue& q) {
                 .color_attachments = color,
         };
 
-        q.render_pass("T3", pass_desc, [&](handler& h) {});
+        q.render_pass("T3", pass_desc,
+                [&](handler& h) { return [](vk::RenderPass, vk::CommandBuffer) {}; });
     }
 
     q.compute_pass("T4", [&](handler& h) {
         COMPUTE_READ(D2)
         COMPUTE_READ(C)
         COMPUTE_WRITE(E)
+        return [](vk::CommandBuffer) {};
     });
 
     q.compute_pass("T5", [&](handler& h) {
         COMPUTE_READ(D1)
         COMPUTE_WRITE(F)
+        return [](vk::CommandBuffer) {};
     });
 
     q.compute_pass("T6", [&](handler& h) {
         COMPUTE_READ(E)
         COMPUTE_READ(F)
         COMPUTE_WRITE(G)
+        return [](vk::CommandBuffer) {};
     });
 
-    q.compute_pass("T7", [&](handler& h) { COMPUTE_READ(G) COMPUTE_WRITE(H) });
-    q.compute_pass("T8", [&](handler& h) { COMPUTE_READ(H) COMPUTE_WRITE(I) });
-    q.compute_pass("T9", [&](handler& h) { COMPUTE_READ(I) COMPUTE_READ(G) COMPUTE_WRITE(J) });
-    q.compute_pass("T10", [&](handler& h) { COMPUTE_READ(J) COMPUTE_WRITE(K) });
+    q.compute_pass("T7", [&](handler& h) {
+        COMPUTE_READ(G) COMPUTE_WRITE(H) return [](vk::CommandBuffer) {};
+    });
+    q.compute_pass("T8", [&](handler& h) {
+        COMPUTE_READ(H) COMPUTE_WRITE(I) return [](vk::CommandBuffer) {};
+    });
+    q.compute_pass("T9", [&](handler& h) {
+        COMPUTE_READ(I) COMPUTE_READ(G) COMPUTE_WRITE(J) return [](vk::CommandBuffer) {};
+    });
+    q.compute_pass("T10", [&](handler& h) {
+        COMPUTE_READ(J) COMPUTE_WRITE(K) return [](vk::CommandBuffer) {};
+    });
 
     /*A.discard();
   B.discard();
@@ -710,18 +710,15 @@ void test_case_1(graal::queue& q) {
     q.compute_pass("T10", [&](handler& h) {
         // color_attachment_accessor write_K{K, discard, h};
         // sampled_image_accessor sample_I{ I, h };
-
-        auto f = [=] {
-            // do something with tex
-            // auto tex = write_K.get_gl_object();
-        };
+        return [](vk::CommandBuffer) {};
     });
     q.enqueue_pending_tasks();
 }
 
 void test_parallel_branches(queue& q) {
-    VIMG(S);
+    device dev = q.get_device();
 
+    VIMG(S);
     VIMG(C);
 
     {
@@ -731,22 +728,41 @@ void test_parallel_branches(queue& q) {
         VIMG(B1);
         VIMG(B2);
         VIMG(B3);
-        q.compute_pass([&](handler& h) { COMPUTE_WRITE(S) });
+        q.compute_pass([&](handler& h) {
+            COMPUTE_WRITE(S)
+            return [](vk::CommandBuffer) {};
+        });
         // A branch
-        q.compute_pass([&](handler& h) { COMPUTE_READ(S) COMPUTE_WRITE(A1) });
-        q.compute_pass([&](handler& h) { COMPUTE_READ(A1) COMPUTE_WRITE(A2) });
-        q.compute_pass([&](handler& h) { COMPUTE_READ(A2) COMPUTE_WRITE(A3) });
+        q.compute_pass([&](handler& h) {
+            COMPUTE_READ(S) COMPUTE_WRITE(A1) return [](vk::CommandBuffer) {};
+        });
+        q.compute_pass([&](handler& h) {
+            COMPUTE_READ(A1) COMPUTE_WRITE(A2) return [](vk::CommandBuffer) {};
+        });
+        q.compute_pass([&](handler& h) {
+            COMPUTE_READ(A2) COMPUTE_WRITE(A3) return [](vk::CommandBuffer) {};
+        });
         // B branch
-        q.compute_pass([&](handler& h) { COMPUTE_READ(S) COMPUTE_WRITE(B1) });
-        q.compute_pass([&](handler& h) { COMPUTE_READ(B1) COMPUTE_WRITE(B2) });
-        q.compute_pass([&](handler& h) { COMPUTE_READ(B2) COMPUTE_WRITE(B3) });
+        q.compute_pass([&](handler& h) {
+            COMPUTE_READ(S) COMPUTE_WRITE(B1) return [](vk::CommandBuffer) {};
+        });
+        q.compute_pass([&](handler& h) {
+            COMPUTE_READ(B1) COMPUTE_WRITE(B2) return [](vk::CommandBuffer) {};
+        });
+        q.compute_pass([&](handler& h) {
+            COMPUTE_READ(B2) COMPUTE_WRITE(B3) return [](vk::CommandBuffer) {};
+        });
         // C
-        q.compute_pass([&](handler& h) { COMPUTE_READ(A3) COMPUTE_READ(B3) COMPUTE_WRITE(C) });
+        q.compute_pass([&](handler& h) {
+            COMPUTE_READ(A3) COMPUTE_READ(B3) COMPUTE_WRITE(C) return [](vk::CommandBuffer) {};
+        });
     }
     q.enqueue_pending_tasks();
 }
 
 void test_aliasing_pipelining_conflicts(graal::queue& q) {
+    device dev = q.get_device();
+
     {
         VIMG(A);
         VIMG(B);
@@ -770,6 +786,7 @@ void test_aliasing_pipelining_conflicts(graal::queue& q) {
                         vk::PipelineStageFlagBits::eColorAttachmentOutput,
                         vk::PipelineStageFlagBits::eColorAttachmentOutput,
                         vk::ImageLayout::eColorAttachmentOptimal);
+                return [](vk::RenderPass, vk::CommandBuffer) {};
             });
         }
 
@@ -781,6 +798,7 @@ void test_aliasing_pipelining_conflicts(graal::queue& q) {
             h.add_image_access(C, vk::AccessFlagBits::eShaderWrite,
                     vk::PipelineStageFlagBits::eComputeShader,
                     vk::PipelineStageFlagBits::eComputeShader, vk::ImageLayout::eGeneral);
+            return [](vk::CommandBuffer) {};
         });
 
         q.compute_pass([&](handler& h) {
@@ -791,6 +809,7 @@ void test_aliasing_pipelining_conflicts(graal::queue& q) {
             h.add_image_access(D, vk::AccessFlagBits::eShaderWrite,
                     vk::PipelineStageFlagBits::eComputeShader,
                     vk::PipelineStageFlagBits::eComputeShader, vk::ImageLayout::eGeneral);
+            return [](vk::CommandBuffer) {};
         });
     }
 

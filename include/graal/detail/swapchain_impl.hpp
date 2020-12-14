@@ -48,11 +48,9 @@ class swapchain_image_impl : public image_resource {
 public:
     swapchain_image_impl(
             std::shared_ptr<detail::swapchain_impl> swapchain, vk::Image image, uint32_t index) :
-        image_resource{resource_type::swapchain_image},
+        image_resource{resource_type::swapchain_image, image, swapchain->format()},
         swapchain_{std::move(swapchain)}, index_{index} 
     {
-        image_resource::image = image; 
-        image_resource::format = swapchain_->format();
     }
 
     [[nodiscard]] uint32_t index() const noexcept {
@@ -60,7 +58,7 @@ public:
     }
 
     [[nodiscard]] vk::Image get_vk_image() const noexcept {
-        return image;
+        return image_;
     }
 
     [[nodiscard]] vk::SwapchainKHR get_vk_swapchain() const noexcept {

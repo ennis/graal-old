@@ -27,6 +27,21 @@ public:
         return false;
     }
 
+    template <typename Pred>
+    bool fetch_if(T& out_obj, Pred pred) {
+        for (size_t i = 0; i < free_list_.size(); ++i) {
+            if (pred(free_list_[i])) {
+                if (i != free_list_.size() - 1) {
+                    std::swap(free_list_[i], free_list_.back());
+                }
+                out_obj = free_list_.back();
+                free_list_.pop_back();
+                return true;
+            }
+        }
+        return false;
+    }
+
     /// @brief Recycle one object
     /// @param obj
     void recycle(T&& obj) {

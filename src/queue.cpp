@@ -1,4 +1,6 @@
 #include <graal/detail/command_buffer_pool.hpp>
+#include <graal/detail/pipeline_stage_tracker.hpp>
+#include <graal/detail/staging_pool.hpp>
 #include <graal/detail/swapchain_impl.hpp>
 #include <graal/detail/task.hpp>
 #include <graal/queue.hpp>
@@ -12,8 +14,6 @@
 #include <numeric>
 #include <queue>
 #include <span>
-
-#include <future>
 
 namespace graal {
 namespace detail {
@@ -61,8 +61,8 @@ std::vector<T*> to_raw_ptr_vector(const std::vector<std::shared_ptr<T>>& v) {
 
 bool adjust_allocation_requirements(
         allocation_requirements& req_a, const allocation_requirements& req_b) {
-    // TODO dedicated allocs?
-    if (req_a.flags != req_b.flags) return false;
+    if (req_a.required_flags != req_b.required_flags) return false;
+    // XXX what about preferred flags?
     // don't alias if the memory type bits are not strictly the same
     if (req_a.memreq.memoryTypeBits != req_b.memreq.memoryTypeBits) return false;
 
@@ -86,17 +86,8 @@ struct temporary {
         stages = resource->last_pipeline_stages;
     }
 
-    void init_object(device_impl_ptr device) {
-        resource->realize(std::move(device));
-    }
-
     /// @brief The resource
     resource_ptr resource;
-    /*resource_type type;
-    union {
-        VkImage image = nullptr;
-        VkBuffer buffer;
-    } object;  // vulkan handle to object, not created immediately*/
     std::array<serial_number, max_queues> access_sn;  // last access SN
     submission_number
             write_snn;  // last write SN (a dummy one is first assigned when building the DAG)
@@ -105,16 +96,6 @@ struct temporary {
     vk::AccessFlags access_flags{};
     vk::PipelineStageFlags stages{};
 };
-
-std::string get_task_name(task_index index, const task& task) {
-    if (task.name.empty()) { return fmt::format("#{}", index); }
-    return task.name;
-}
-
-std::string get_object_name(std::size_t index, const named_object& obj) {
-    if (obj.name().empty()) { return fmt::format("#{}", index); }
-    return std::string{obj.name()};
-}
 
 std::string pipeline_stages_to_string_compact(vk::PipelineStageFlags value) {
     if (!value) return "{}";
@@ -228,246 +209,6 @@ std::vector<bitset> transitive_closure(std::span<const task> tasks) {
     return m;
 }
 
-/*#ifdef GRAAL_TRACE_BATCH_SUBMIT
-    fmt::print("pre-submission took {}us\n", us.count());
-    fmt::print("Memory blocks:\n");
-    for (size_t i = 0; i < allocations.size(); ++i) {
-        const auto& alloc = allocations[i];
-        fmt::print("   MEM_{}: size={} \n"
-                   "           align={}\n"
-                   "           flags={}\n"
-                   "           memory_type_bits={}\n",
-                i, alloc.memreq.size, alloc.memreq.alignment, alloc.flags.underlying_value(),
-                alloc.memreq.memoryTypeBits);
-    }
-
-    fmt::print("\nMemory block assignments:\n");
-    for (size_t i = 0; i < n_tmp; ++i) {
-        if (alloc_map[i] != (size_t) -1) {
-            fmt::print("   {:02d} => MEM_{}\n", i, alloc_map[i]);
-        } else {
-            fmt::print("   {:02d} => no memory\n", i);
-        }
-    }
-
-    /*for (size_t t = 0; t < num_tasks; ++t) {
-                      fmt::print("live set for task #{}:", t);
-                      for (size_t i = 0; i < num_temporaries; ++i) {
-                        if (live_sets[t].test(i)) {
-                          fmt::print("{},", temporaries_[i]->name());
-                        }
-                      }
-                      fmt::print("\n");
-                    }*/
-
-/*inline constexpr bool is_render_pass_attachment_access(vk::AccessFlags flags) {
-    return !(
-            flags
-            & ~(vk::AccessFlagBits::eColorAttachmentRead | vk::AccessFlagBits::eColorAttachmentWrite
-                    | vk::AccessFlagBits::eInputAttachmentRead));
-}*/
-
-/*inline constexpr bool merge_render_passes(const task& a, const task& b) {
-    // TODO
-    return false;
-}*/
-
-struct pipeline_state {
-    enum stage_index : size_t {
-        i_DI,
-        i_VI,
-        i_VS,
-        i_TCS,
-        i_TES,
-        i_GS,
-        i_TF,
-        i_TS,
-        i_MS,
-        i_FSR,
-        i_EFT,
-        i_FS,
-        i_LFT,
-        i_CAO,
-        i_FDP,
-        i_CS,
-        i_RTS,
-        i_HST,
-        i_CPR,
-        i_ASB,
-        i_TR,
-        i_CR,
-        max
-    };
-
-    static constexpr auto DI = VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT;
-    static constexpr auto VI = VK_PIPELINE_STAGE_VERTEX_INPUT_BIT;
-    static constexpr auto VS = VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
-    static constexpr auto TCS = VK_PIPELINE_STAGE_TESSELLATION_CONTROL_SHADER_BIT;
-    static constexpr auto TES = VK_PIPELINE_STAGE_TESSELLATION_EVALUATION_SHADER_BIT;
-    static constexpr auto GS = VK_PIPELINE_STAGE_GEOMETRY_SHADER_BIT;
-    static constexpr auto TF = VK_PIPELINE_STAGE_TRANSFORM_FEEDBACK_BIT_EXT;
-    static constexpr auto TS = VK_PIPELINE_STAGE_TASK_SHADER_BIT_NV;
-    static constexpr auto MS = VK_PIPELINE_STAGE_MESH_SHADER_BIT_NV;
-    static constexpr auto FSR = VK_PIPELINE_STAGE_SHADING_RATE_IMAGE_BIT_NV;
-    static constexpr auto EFT = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-    static constexpr auto FS = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-    static constexpr auto LFT = VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-    static constexpr auto CAO = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    static constexpr auto FDP = VK_PIPELINE_STAGE_FRAGMENT_DENSITY_PROCESS_BIT_EXT;
-    static constexpr auto CS = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-    static constexpr auto RTS = VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR;
-    static constexpr auto HST = VK_PIPELINE_STAGE_HOST_BIT;
-    static constexpr auto CPR = VK_PIPELINE_STAGE_COMMAND_PREPROCESS_BIT_NV;
-    static constexpr auto ASB = VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
-    static constexpr auto TR = VK_PIPELINE_STAGE_TRANSFER_BIT;
-    static constexpr auto CR = VK_PIPELINE_STAGE_CONDITIONAL_RENDERING_BIT_EXT;
-    static constexpr auto ALL_COMMANDS = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-    static constexpr auto ALL_GRAPHICS = VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT;
-    static constexpr auto BOTTOM_OF_PIPE = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
-
-    serial_number stages[stage_index::max] = {0};
-
-    /// @brief Returns whether an barrier is needed for the specified execution dependency (sn+pipeline stages)
-    /// @param sn
-    /// @param source_flags
-    /// @return
-    bool needs_execution_barrier(
-            serial_number sn, vk::PipelineStageFlags source_flags) const noexcept {
-        const VkPipelineStageFlags src = (VkPipelineStageFlags) source_flags;
-        bool needs_barrier = false;
-        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | DI))
-            needs_barrier |= stages[i_DI] < sn;
-        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | VI))
-            needs_barrier |= stages[i_VI] < sn;
-        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | VS))
-            needs_barrier |= stages[i_VS] < sn;
-        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | TCS))
-            needs_barrier |= stages[i_TCS] < sn;
-        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | TES))
-            needs_barrier |= stages[i_TES] < sn;
-        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | GS))
-            needs_barrier |= stages[i_GS] < sn;
-        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | TF))
-            needs_barrier |= stages[i_TF] < sn;
-        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | TS))
-            needs_barrier |= stages[i_TS] < sn;
-        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | MS))
-            needs_barrier |= stages[i_MS] < sn;
-        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | FSR))
-            needs_barrier |= stages[i_FSR] < sn;
-        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | EFT))
-            needs_barrier |= stages[i_EFT] < sn;
-        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | FS))
-            needs_barrier |= stages[i_FS] < sn;
-        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | LFT))
-            needs_barrier |= stages[i_LFT] < sn;
-        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | CAO))
-            needs_barrier |= stages[i_CAO] < sn;
-        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | FDP))
-            needs_barrier |= stages[i_FDP] < sn;
-        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | RTS)) needs_barrier |= stages[i_RTS] < sn;
-        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | CS)) needs_barrier |= stages[i_CS] < sn;
-        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ASB)) needs_barrier |= stages[i_ASB] < sn;
-        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | TR)) needs_barrier |= stages[i_TR] < sn;
-        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | CR)) needs_barrier |= stages[i_CR] < sn;
-        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | HST)) needs_barrier |= stages[i_HST] < sn;
-        if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | CPR)) needs_barrier |= stages[i_CPR] < sn;
-        return needs_barrier;
-    }
-
-    void apply_execution_barrier(serial_number sn, vk::PipelineStageFlags source_flags) {
-        const VkPipelineStageFlags src = (VkPipelineStageFlags) source_flags;
-        /* DI  */ if (src
-                      & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | DI | VI | VS | TCS | TES
-                              | GS | TF | TS | MS | FSR | EFT | FS | LFT | CAO | CS | RTS)) {
-            if (stages[i_DI] < sn) { stages[i_DI] = sn; }
-        }
-        /* VI  */ if (src
-                      & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | VI | VS | TCS | TES | GS
-                              | TF | FSR | EFT | FS | LFT | CAO)) {
-            if (stages[i_VI] < sn) { stages[i_VI] = sn; }
-        }
-        /* VS  */ if (src
-                      & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | VS | TCS | TES | GS | TF
-                              | FSR | EFT | FS | LFT | CAO)) {
-            if (stages[i_VS] < sn) { stages[i_VS] = sn; }
-        }
-        /* TCS */ if (src
-                      & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | TCS | TES | GS | TF | FSR
-                              | EFT | FS | LFT | CAO)) {
-            if (stages[i_TCS] < sn) { stages[i_TCS] = sn; }
-        }
-        /* TES */ if (src
-                      & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | TES | GS | TF | FSR | EFT
-                              | FS | LFT | CAO)) {
-            if (stages[i_TES] < sn) { stages[i_TES] = sn; }
-        }
-        /* GS  */ if (src
-                      & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | GS | TF | FSR | EFT | FS
-                              | LFT | CAO)) {
-            if (stages[i_GS] < sn) { stages[i_GS] = sn; }
-        }
-        /* TF  */ if (src
-                      & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | TF | FSR | EFT | FS | LFT
-                              | CAO)) {
-            if (stages[i_TF] < sn) { stages[i_TF] = sn; }
-        }
-        /* TS  */ if (src
-                      & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | TS | MS | FSR | EFT | FS
-                              | LFT | CAO)) {
-            if (stages[i_TS] < sn) { stages[i_TS] = sn; }
-        }
-        /* MS  */ if (src
-                      & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | MS | FSR | EFT | FS | LFT
-                              | CAO)) {
-            if (stages[i_MS] < sn) { stages[i_MS] = sn; }
-        }
-        /* FSR */ if (src
-                      & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | FSR | EFT | FS | LFT
-                              | CAO)) {
-            if (stages[i_FSR] < sn) { stages[i_FSR] = sn; }
-        }
-        /* EFT */ if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | EFT | FS | LFT | CAO)) {
-            if (stages[i_EFT] < sn) { stages[i_EFT] = sn; }
-        }
-        /* FS  */ if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | FS | LFT | CAO)) {
-            if (stages[i_FS] < sn) { stages[i_FS] = sn; }
-        }
-        /* LFT */ if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | LFT | CAO)) {
-            if (stages[i_LFT] < sn) { stages[i_LFT] = sn; }
-        }
-        /* CAO */ if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | CAO)) {
-            if (stages[i_CAO] < sn) { stages[i_CAO] = sn; }
-        }
-        /* FDP */ if (src
-                      & (BOTTOM_OF_PIPE | ALL_COMMANDS | ALL_GRAPHICS | FDP | EFT | FS | LFT
-                              | CAO)) {
-            if (stages[i_FDP] < sn) { stages[i_FDP] = sn; }
-        }
-        /* CS  */ if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | CS)) {
-            if (stages[i_CS] < sn) { stages[i_CS] = sn; }
-        }
-        /* RTS */ if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | RTS)) {
-            if (stages[i_RTS] < sn) { stages[i_RTS] = sn; }
-        }
-        /* HST */ if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | HST)) {
-            if (stages[i_HST] < sn) { stages[i_HST] = sn; }
-        }
-        /* CPR */ if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | CPR)) {
-            if (stages[i_CPR] < sn) { stages[i_CPR] = sn; }
-        }
-        /* ASB */ if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | ASB)) {
-            if (stages[i_ASB] < sn) { stages[i_ASB] = sn; }
-        }
-        /* TR  */ if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | TR)) {
-            if (stages[i_TR] < sn) { stages[i_TR] = sn; }
-        }
-        /* CR  */ if (src & (BOTTOM_OF_PIPE | ALL_COMMANDS | CR)) {
-            if (stages[i_CR] < sn) { stages[i_CR] = sn; }
-        }
-    }
-};
-
 }  // namespace
 
 /// @brief Per-batch+thread resources
@@ -551,8 +292,10 @@ static void dump_batch(batch& b) {
 
 //-----------------------------------------------------------------------------
 class queue_impl {
+    friend class graal::queue;
+
 public:
-    queue_impl(device_impl_ptr device, const queue_properties& props);
+    queue_impl(device device, const queue_properties& props);
     ~queue_impl();
 
     void enqueue_pending_tasks();
@@ -585,6 +328,12 @@ public:
     void add_resource_dependency(
             task& t, resource_ptr resource, const resource_access_details& access);
 
+    [[nodiscard]] void* get_staging_buffer(
+            size_t align, size_t size, vk::Buffer& out_buffer, vk::DeviceSize& out_offset) {
+        return staging_.get_staging_buffer(device_.get_vk_device(), device_.get_allocator(),
+                staging_buffers_, align, size, out_buffer, out_offset);
+    }
+
 private:
     task& init_task(task& t, std::string_view name) {
         last_serial_++;
@@ -597,8 +346,6 @@ private:
         return t;
     }
 
-    //void submit_tasks(std::span<const bitset> reachability);
-
     size_t get_resource_tmp_index(resource_ptr resource);
     [[nodiscard]] command_buffer_pool get_command_buffer_pool();
 
@@ -609,21 +356,25 @@ private:
 
     using resource_to_temporary_map = std::unordered_map<resource*, size_t>;
 
+    device device_;
     queue_properties props_;
     queue_indices queue_indices_;
-    device_impl_ptr device_;
     batch batch_;
     serial_number last_serial_ = 0;
     serial_number completed_serial_ = 0;
     std::deque<batch> in_flight_batches_;
     vk::Semaphore timelines_[max_queues];
+
+    staging_pool staging_;
+    recycler<staging_buffer> staging_buffers_;
+
     recycler<command_buffer_pool> cb_pools;
     resource_to_temporary_map tmp_indices;  // for the current batch
 };
 
-queue_impl::queue_impl(device_impl_ptr device, const queue_properties& props) :
-    device_{device}, props_{props}, queue_indices_{device->get_queue_indices()} {
-    auto vk_device = device_->get_vk_device();
+queue_impl::queue_impl(device device, const queue_properties& props) :
+    device_{std::move(device)}, props_{props}, queue_indices_{device_.get_queue_indices()} {
+    auto vk_device = device_.get_vk_device();
 
     vk::SemaphoreTypeCreateInfo timeline_create_info{
             .semaphoreType = vk::SemaphoreType::eTimeline, .initialValue = 0};
@@ -634,7 +385,7 @@ queue_impl::queue_impl(device_impl_ptr device, const queue_properties& props) :
 }
 
 queue_impl::~queue_impl() {
-    auto vk_device = device_->get_vk_device();
+    auto vk_device = device_.get_vk_device();
     for (size_t i = 0; i < max_queues; ++i) {
         vk_device.destroySemaphore(timelines_[i]);
     }
@@ -653,12 +404,12 @@ size_t queue_impl::get_resource_tmp_index(resource_ptr resource) {
 }
 
 command_buffer_pool queue_impl::get_command_buffer_pool() {
-    const auto vk_device = device_->get_vk_device();
+    const auto vk_device = device_.get_vk_device();
     command_buffer_pool cbp;
     if (!cb_pools.fetch(cbp)) {
         // TODO other queues?
         vk::CommandPoolCreateInfo create_info{.flags = vk::CommandPoolCreateFlagBits::eTransient,
-                .queueFamilyIndex = device_->get_graphics_queue_family()};
+                .queueFamilyIndex = device_.get_graphics_queue_family()};
         const auto pool = vk_device.createCommandPool(create_info);
         cbp = command_buffer_pool{
                 .command_pool = pool,
@@ -773,9 +524,9 @@ struct submitted_task {
     vk::PipelineStageFlags dst_stage_mask;
     submission_number snn;
     size_t cb_index;
-    size_t num_image_memory_barriers;
+    uint32_t num_image_memory_barriers;
     size_t image_memory_barriers_offset;  // offset into the vector of image barriers
-    size_t num_buffer_memory_barriers;
+    uint32_t num_buffer_memory_barriers;
     size_t buffer_memory_barriers_offset;  // offset into the vector of buffer barriers
 
     bool needs_cmd_pipeline_barrier() const noexcept {
@@ -792,7 +543,7 @@ struct device_memory_allocation {
 };
 
 struct schedule_ctx {
-    device_impl_ptr device;
+    device& dev;
     queue_indices queues;
     std::span<task> tasks;
     std::span<temporary> temporaries;
@@ -805,7 +556,7 @@ struct schedule_ctx {
     task_priority_queue ready_queue;  // queue of tasks ready to be submitted
 
     // --- pipeline state tracking
-    pipeline_state pstate[max_queues];
+    pipeline_stage_tracker pstate[max_queues];
 
     // --- liveness
     std::vector<bitset> reachability;  // reachability matrix [to][from]
@@ -839,9 +590,9 @@ struct schedule_ctx {
     std::vector<size_t>
             image_memory_barriers_temporaries;  // resources referenced in image_memory_barriers
 
-    schedule_ctx(device_impl_ptr d, queue_indices queues, serial_number base_sn,
-            std::span<task> tasks, std::span<temporary> temporaries) :
-        device{std::move(d)},
+    schedule_ctx(device& d, queue_indices queues, serial_number base_sn, std::span<task> tasks,
+            std::span<temporary> temporaries) :
+        dev{d},
         queues{queues}, base_sn{base_sn}, next_sn{base_sn}, tasks{tasks}, temporaries{temporaries} {
         const auto n_task = tasks.size();
         const auto n_tmp = temporaries.size();
@@ -849,14 +600,12 @@ struct schedule_ctx {
         done_tasks.resize(n_task, false);
         ready_tasks.resize(n_task, false);
         submitted_tasks.resize(n_task);
-        allocation_map.resize(n_tmp, (size_t)-1);
+        allocation_map.resize(n_tmp, (size_t) -1);
 
         // prepare resources
         for (size_t i = 0; i < n_tmp; ++i) {
             // reset the temporary last write serial used to build the DAG
             temporaries[i].write_snn.serial = 0;
-            // create the vulkan resource (without bound memory)
-            temporaries[i].init_object(device);
         }
 
         live.resize(n_tmp);
@@ -885,71 +634,115 @@ struct schedule_ctx {
         fmt::print("Scheduling state dump:\nnext_sn={}\n", next_sn);
         fmt::print("Pipeline:\n");
         fmt::print("{:4d} {:4d} {:4d} {:4d} | DRAW_INDIRECT\n",
-                pstate[0].stages[pipeline_state::i_DI], pstate[1].stages[pipeline_state::i_DI],
-                pstate[2].stages[pipeline_state::i_DI], pstate[3].stages[pipeline_state::i_DI]);
+                pstate[0].stages[pipeline_stage_tracker::i_DI],
+                pstate[1].stages[pipeline_stage_tracker::i_DI],
+                pstate[2].stages[pipeline_stage_tracker::i_DI],
+                pstate[3].stages[pipeline_stage_tracker::i_DI]);
         fmt::print("{:4d} {:4d} {:4d} {:4d} | VERTEX_INPUT\n",
-                pstate[0].stages[pipeline_state::i_VI], pstate[1].stages[pipeline_state::i_VI],
-                pstate[2].stages[pipeline_state::i_VI], pstate[3].stages[pipeline_state::i_VI]);
+                pstate[0].stages[pipeline_stage_tracker::i_VI],
+                pstate[1].stages[pipeline_stage_tracker::i_VI],
+                pstate[2].stages[pipeline_stage_tracker::i_VI],
+                pstate[3].stages[pipeline_stage_tracker::i_VI]);
         fmt::print("{:4d} {:4d} {:4d} {:4d} | VERTEX_SHADER\n",
-                pstate[0].stages[pipeline_state::i_VS], pstate[1].stages[pipeline_state::i_VS],
-                pstate[2].stages[pipeline_state::i_VS], pstate[3].stages[pipeline_state::i_VS]);
+                pstate[0].stages[pipeline_stage_tracker::i_VS],
+                pstate[1].stages[pipeline_stage_tracker::i_VS],
+                pstate[2].stages[pipeline_stage_tracker::i_VS],
+                pstate[3].stages[pipeline_stage_tracker::i_VS]);
         fmt::print("{:4d} {:4d} {:4d} {:4d} | TESSELLATION_CONTROL_SHADER\n",
-                pstate[0].stages[pipeline_state::i_TCS], pstate[1].stages[pipeline_state::i_TCS],
-                pstate[2].stages[pipeline_state::i_TCS], pstate[3].stages[pipeline_state::i_TCS]);
+                pstate[0].stages[pipeline_stage_tracker::i_TCS],
+                pstate[1].stages[pipeline_stage_tracker::i_TCS],
+                pstate[2].stages[pipeline_stage_tracker::i_TCS],
+                pstate[3].stages[pipeline_stage_tracker::i_TCS]);
         fmt::print("{:4d} {:4d} {:4d} {:4d} | TESSELLATION_EVALUATION_SHADER\n",
-                pstate[0].stages[pipeline_state::i_TES], pstate[1].stages[pipeline_state::i_TES],
-                pstate[2].stages[pipeline_state::i_TES], pstate[3].stages[pipeline_state::i_TES]);
+                pstate[0].stages[pipeline_stage_tracker::i_TES],
+                pstate[1].stages[pipeline_stage_tracker::i_TES],
+                pstate[2].stages[pipeline_stage_tracker::i_TES],
+                pstate[3].stages[pipeline_stage_tracker::i_TES]);
         fmt::print("{:4d} {:4d} {:4d} {:4d} | GEOMETRY_SHADER\n",
-                pstate[0].stages[pipeline_state::i_GS], pstate[1].stages[pipeline_state::i_GS],
-                pstate[2].stages[pipeline_state::i_GS], pstate[3].stages[pipeline_state::i_GS]);
+                pstate[0].stages[pipeline_stage_tracker::i_GS],
+                pstate[1].stages[pipeline_stage_tracker::i_GS],
+                pstate[2].stages[pipeline_stage_tracker::i_GS],
+                pstate[3].stages[pipeline_stage_tracker::i_GS]);
         fmt::print("{:4d} {:4d} {:4d} {:4d} | TRANSFORM_FEEDBACK_EXT\n",
-                pstate[0].stages[pipeline_state::i_TF], pstate[1].stages[pipeline_state::i_TF],
-                pstate[2].stages[pipeline_state::i_TF], pstate[3].stages[pipeline_state::i_TF]);
+                pstate[0].stages[pipeline_stage_tracker::i_TF],
+                pstate[1].stages[pipeline_stage_tracker::i_TF],
+                pstate[2].stages[pipeline_stage_tracker::i_TF],
+                pstate[3].stages[pipeline_stage_tracker::i_TF]);
         fmt::print("{:4d} {:4d} {:4d} {:4d} | TASK_SHADER_NV\n",
-                pstate[0].stages[pipeline_state::i_TS], pstate[1].stages[pipeline_state::i_TS],
-                pstate[2].stages[pipeline_state::i_TS], pstate[3].stages[pipeline_state::i_TS]);
+                pstate[0].stages[pipeline_stage_tracker::i_TS],
+                pstate[1].stages[pipeline_stage_tracker::i_TS],
+                pstate[2].stages[pipeline_stage_tracker::i_TS],
+                pstate[3].stages[pipeline_stage_tracker::i_TS]);
         fmt::print("{:4d} {:4d} {:4d} {:4d} | MESH_SHADER_NV\n",
-                pstate[0].stages[pipeline_state::i_MS], pstate[1].stages[pipeline_state::i_MS],
-                pstate[2].stages[pipeline_state::i_MS], pstate[3].stages[pipeline_state::i_MS]);
+                pstate[0].stages[pipeline_stage_tracker::i_MS],
+                pstate[1].stages[pipeline_stage_tracker::i_MS],
+                pstate[2].stages[pipeline_stage_tracker::i_MS],
+                pstate[3].stages[pipeline_stage_tracker::i_MS]);
         fmt::print("{:4d} {:4d} {:4d} {:4d} | SHADING_RATE_IMAGE_NV\n",
-                pstate[0].stages[pipeline_state::i_FSR], pstate[1].stages[pipeline_state::i_FSR],
-                pstate[2].stages[pipeline_state::i_FSR], pstate[3].stages[pipeline_state::i_FSR]);
+                pstate[0].stages[pipeline_stage_tracker::i_FSR],
+                pstate[1].stages[pipeline_stage_tracker::i_FSR],
+                pstate[2].stages[pipeline_stage_tracker::i_FSR],
+                pstate[3].stages[pipeline_stage_tracker::i_FSR]);
         fmt::print("{:4d} {:4d} {:4d} {:4d} | EARLY_FRAGMENT_TESTS\n",
-                pstate[0].stages[pipeline_state::i_EFT], pstate[1].stages[pipeline_state::i_EFT],
-                pstate[2].stages[pipeline_state::i_EFT], pstate[3].stages[pipeline_state::i_EFT]);
+                pstate[0].stages[pipeline_stage_tracker::i_EFT],
+                pstate[1].stages[pipeline_stage_tracker::i_EFT],
+                pstate[2].stages[pipeline_stage_tracker::i_EFT],
+                pstate[3].stages[pipeline_stage_tracker::i_EFT]);
         fmt::print("{:4d} {:4d} {:4d} {:4d} | FRAGMENT_SHADER\n",
-                pstate[0].stages[pipeline_state::i_FS], pstate[1].stages[pipeline_state::i_FS],
-                pstate[2].stages[pipeline_state::i_FS], pstate[3].stages[pipeline_state::i_FS]);
+                pstate[0].stages[pipeline_stage_tracker::i_FS],
+                pstate[1].stages[pipeline_stage_tracker::i_FS],
+                pstate[2].stages[pipeline_stage_tracker::i_FS],
+                pstate[3].stages[pipeline_stage_tracker::i_FS]);
         fmt::print("{:4d} {:4d} {:4d} {:4d} | LATE_FRAGMENT_TESTS\n",
-                pstate[0].stages[pipeline_state::i_LFT], pstate[1].stages[pipeline_state::i_LFT],
-                pstate[2].stages[pipeline_state::i_LFT], pstate[3].stages[pipeline_state::i_LFT]);
+                pstate[0].stages[pipeline_stage_tracker::i_LFT],
+                pstate[1].stages[pipeline_stage_tracker::i_LFT],
+                pstate[2].stages[pipeline_stage_tracker::i_LFT],
+                pstate[3].stages[pipeline_stage_tracker::i_LFT]);
         fmt::print("{:4d} {:4d} {:4d} {:4d} | COLOR_ATTACHMENT_OUTPUT\n",
-                pstate[0].stages[pipeline_state::i_CAO], pstate[1].stages[pipeline_state::i_CAO],
-                pstate[2].stages[pipeline_state::i_CAO], pstate[3].stages[pipeline_state::i_CAO]);
+                pstate[0].stages[pipeline_stage_tracker::i_CAO],
+                pstate[1].stages[pipeline_stage_tracker::i_CAO],
+                pstate[2].stages[pipeline_stage_tracker::i_CAO],
+                pstate[3].stages[pipeline_stage_tracker::i_CAO]);
         fmt::print("{:4d} {:4d} {:4d} {:4d} | FRAGMENT_DENSITY_PROCESS_EXT\n",
-                pstate[0].stages[pipeline_state::i_FDP], pstate[1].stages[pipeline_state::i_FDP],
-                pstate[2].stages[pipeline_state::i_FDP], pstate[3].stages[pipeline_state::i_FDP]);
+                pstate[0].stages[pipeline_stage_tracker::i_FDP],
+                pstate[1].stages[pipeline_stage_tracker::i_FDP],
+                pstate[2].stages[pipeline_stage_tracker::i_FDP],
+                pstate[3].stages[pipeline_stage_tracker::i_FDP]);
         fmt::print("{:4d} {:4d} {:4d} {:4d} | COMPUTE_SHADER\n",
-                pstate[0].stages[pipeline_state::i_CS], pstate[1].stages[pipeline_state::i_CS],
-                pstate[2].stages[pipeline_state::i_CS], pstate[3].stages[pipeline_state::i_CS]);
+                pstate[0].stages[pipeline_stage_tracker::i_CS],
+                pstate[1].stages[pipeline_stage_tracker::i_CS],
+                pstate[2].stages[pipeline_stage_tracker::i_CS],
+                pstate[3].stages[pipeline_stage_tracker::i_CS]);
         fmt::print("{:4d} {:4d} {:4d} {:4d} | RAY_TRACING_SHADER_KHR\n",
-                pstate[0].stages[pipeline_state::i_RTS], pstate[1].stages[pipeline_state::i_RTS],
-                pstate[2].stages[pipeline_state::i_RTS], pstate[3].stages[pipeline_state::i_RTS]);
-        fmt::print("{:4d} {:4d} {:4d} {:4d} | HOST\n", pstate[0].stages[pipeline_state::i_HST],
-                pstate[1].stages[pipeline_state::i_HST], pstate[2].stages[pipeline_state::i_HST],
-                pstate[3].stages[pipeline_state::i_HST]);
+                pstate[0].stages[pipeline_stage_tracker::i_RTS],
+                pstate[1].stages[pipeline_stage_tracker::i_RTS],
+                pstate[2].stages[pipeline_stage_tracker::i_RTS],
+                pstate[3].stages[pipeline_stage_tracker::i_RTS]);
+        fmt::print("{:4d} {:4d} {:4d} {:4d} | HOST\n",
+                pstate[0].stages[pipeline_stage_tracker::i_HST],
+                pstate[1].stages[pipeline_stage_tracker::i_HST],
+                pstate[2].stages[pipeline_stage_tracker::i_HST],
+                pstate[3].stages[pipeline_stage_tracker::i_HST]);
         fmt::print("{:4d} {:4d} {:4d} {:4d} | COMMAND_PREPROCESS_NV\n",
-                pstate[0].stages[pipeline_state::i_CPR], pstate[1].stages[pipeline_state::i_CPR],
-                pstate[2].stages[pipeline_state::i_CPR], pstate[3].stages[pipeline_state::i_CPR]);
+                pstate[0].stages[pipeline_stage_tracker::i_CPR],
+                pstate[1].stages[pipeline_stage_tracker::i_CPR],
+                pstate[2].stages[pipeline_stage_tracker::i_CPR],
+                pstate[3].stages[pipeline_stage_tracker::i_CPR]);
         fmt::print("{:4d} {:4d} {:4d} {:4d} | ACCELERATION_STRUCTURE_BUILD_KHR\n",
-                pstate[0].stages[pipeline_state::i_ASB], pstate[1].stages[pipeline_state::i_ASB],
-                pstate[2].stages[pipeline_state::i_ASB], pstate[3].stages[pipeline_state::i_ASB]);
-        fmt::print("{:4d} {:4d} {:4d} {:4d} | TRANSFER\n", pstate[0].stages[pipeline_state::i_TR],
-                pstate[1].stages[pipeline_state::i_TR], pstate[2].stages[pipeline_state::i_TR],
-                pstate[3].stages[pipeline_state::i_TR]);
+                pstate[0].stages[pipeline_stage_tracker::i_ASB],
+                pstate[1].stages[pipeline_stage_tracker::i_ASB],
+                pstate[2].stages[pipeline_stage_tracker::i_ASB],
+                pstate[3].stages[pipeline_stage_tracker::i_ASB]);
+        fmt::print("{:4d} {:4d} {:4d} {:4d} | TRANSFER\n",
+                pstate[0].stages[pipeline_stage_tracker::i_TR],
+                pstate[1].stages[pipeline_stage_tracker::i_TR],
+                pstate[2].stages[pipeline_stage_tracker::i_TR],
+                pstate[3].stages[pipeline_stage_tracker::i_TR]);
         fmt::print("{:4d} {:4d} {:4d} {:4d} | CONDITIONAL_RENDERING_EXT\n",
-                pstate[0].stages[pipeline_state::i_CR], pstate[1].stages[pipeline_state::i_CR],
-                pstate[2].stages[pipeline_state::i_CR], pstate[3].stages[pipeline_state::i_CR]);
+                pstate[0].stages[pipeline_stage_tracker::i_CR],
+                pstate[1].stages[pipeline_stage_tracker::i_CR],
+                pstate[2].stages[pipeline_stage_tracker::i_CR],
+                pstate[3].stages[pipeline_stage_tracker::i_CR]);
         fmt::print("Resources:\n");
         for (size_t i = 0; i < temporaries.size(); ++i) {
             fmt::print("{:<10} {} W={}:{} A={},{},{},{} L={} AM={} S={}\n",
@@ -968,55 +761,45 @@ struct schedule_ctx {
     /// @brief Assigns a memory block for the given temporary,
     /// possibly aliasing with a temporary that can be proven dead in the current scheduling state.
     /// @param tmp_index the index of the temporary to assign a memory block to
-    void assign_device_memory(size_t tmp_index) {
-        auto allocator = device->get_allocator();
+    void assign_memory(size_t tmp_index) {
+        auto allocator = dev.get_allocator();
         auto r = temporaries[tmp_index].resource.get();
 
         // skip if it doesn't need allocation
-        if (!r->is_virtual() || r->allocated || allocation_map[tmp_index] != (size_t)-1) return;        
+        if (!r->is_virtual() || r->allocated || allocation_map[tmp_index] != (size_t) -1) return;
 
         virtual_resource& vr = r->as_virtual_resource();
 
-        const auto requirements = vr.get_allocation_requirements(device);
+        const auto requirements = vr.get_allocation_requirements(dev.get_vk_device());
 
         // resource became alive, if possible, alias with a dead
         // temporary, otherwise allocate a new one.
-        if (!(requirements.flags & allocation_flags::aliasable)) {
-            allocations.push_back(device_memory_allocation{
-                    .req = requirements,
-                    .alloc = nullptr  // allocated later, as requirements might change
-            });
+        bool aliased = false;
+        for (size_t t1 = 0; t1 < temporaries.size(); ++t1) {
+            // filter out live resources
+            if (!dead[t1]) continue;
+
+            auto i_alloc = allocation_map[t1];
+            auto& dead_alloc = allocations[i_alloc];
+
+            if (adjust_allocation_requirements(dead_alloc.req, requirements)) {
+                // the two resources may alias; the requirements
+                // have been adjusted
+                allocation_map[tmp_index] = i_alloc;
+                // not dead anymore
+                dead[t1] = false;
+                aliased = true;
+                break;
+            }
+
+            // otherwise continue
+        }
+
+        // no aliasing opportunities
+        if (!aliased) {
+            // new allocation
+            allocations.push_back(device_memory_allocation{.req = requirements, .alloc = nullptr});
             allocation_map[tmp_index] = allocations.size() - 1;
-        } else {
-            // whether we managed to find a dead resource to alias with
-            bool aliased = false;
-            for (size_t t1 = 0; t1 < temporaries.size(); ++t1) {
-                // filter out live resources
-                if (!dead[t1]) continue;
-
-                auto i_alloc = allocation_map[t1];
-                auto& dead_alloc = allocations[i_alloc];
-
-                if (adjust_allocation_requirements(dead_alloc.req, requirements)) {
-                    // the two resources may alias; the requirements
-                    // have been adjusted
-                    allocation_map[tmp_index] = i_alloc;
-                    // not dead anymore
-                    dead[t1] = false;
-                    aliased = true;
-                    break;
-                }
-
-                // otherwise continue
-            }
-
-            // no aliasing opportunities
-            if (!aliased) {
-                // new allocation
-                allocations.push_back(
-                        device_memory_allocation{.req = requirements, .alloc = nullptr});
-                allocation_map[tmp_index] = allocations.size() - 1;
-            }
         }
     }
 
@@ -1036,7 +819,7 @@ struct schedule_ctx {
     void memory_dependency(size_t tmp_index, const resource_access_details& access,
             submission_number snn, std::array<serial_number, max_queues>& queue_syncs,
             std::array<vk::PipelineStageFlags, max_queues>& queue_syncs_wait_dst_stages,
-            size_t& num_image_memory_barriers, size_t& num_buffer_memory_barriers,
+            uint32_t& num_image_memory_barriers, uint32_t& num_buffer_memory_barriers,
             vk::PipelineStageFlags& src_stage_flags, vk::PipelineStageFlags& dst_stage_flags) {
         auto& tmp = temporaries[tmp_index];
         const bool writing = is_write_access(access.access_flags) || access.layout != tmp.layout;
@@ -1060,15 +843,13 @@ struct schedule_ctx {
         dst_stage_flags |= access.input_stage;
 
         // --- is a memory barrier necessary for this access?
-        const bool needs_layout_transition =
-                tmp.layout != access.layout;  // yes, if layout is different
+        // yes, if layout is different
+        const bool needs_layout_transition = tmp.layout != access.layout;
+        // covers RAW hazards, and visibility across different access types
         const bool visibility_hazard =
-                (tmp.access_flags & access.access_flags)
-                != access.access_flags;  // covers RAW hazards, and visibility across different access types
-        const bool waw_hazard =
-                writing
-                && is_write_access(
-                        tmp.access_flags);  // covers WAW hazards across the same access type (writes must happen in order)
+                (tmp.access_flags & access.access_flags) != access.access_flags;
+        // covers WAW hazards across the same access type (writes must happen in order)
+        const bool waw_hazard = writing && is_write_access(tmp.access_flags);
 
         if (needs_layout_transition || visibility_hazard || waw_hazard) {
             // the resource access needs a memory barrier
@@ -1077,10 +858,11 @@ struct schedule_ctx {
                 // image barrier
 
                 // determine aspect mask
-                const auto format = tmp.resource->as_image().format;
-                const auto vk_image = tmp.resource->as_image().image;
+                const auto format = tmp.resource->as_image().format();
+                const auto vk_image = tmp.resource->as_image().vk_image();
                 assert(vk_image && "image not realized");
 
+                // TODO move into a function (aspect_mask_from_format)
                 vk::ImageAspectFlags aspect_mask;
                 if (is_depth_only_format(format)) {
                     aspect_mask = vk::ImageAspectFlagBits::eDepth;
@@ -1094,20 +876,20 @@ struct schedule_ctx {
                 }
                 // TODO metadata? planes?
 
-                const vk::ImageSubresourceRange subresource_range = vk::ImageSubresourceRange{
-                          .aspectMask = aspect_mask,
+                const vk::ImageSubresourceRange subresource_range =
+                        vk::ImageSubresourceRange{.aspectMask = aspect_mask,
                                 .baseMipLevel = 0,
                                 .levelCount = VK_REMAINING_MIP_LEVELS,
                                 .baseArrayLayer = 0,
-                                .layerCount = VK_REMAINING_ARRAY_LAYERS };
+                                .layerCount = VK_REMAINING_ARRAY_LAYERS};
 
-                image_memory_barriers.push_back(vk::ImageMemoryBarrier{
-                        .srcAccessMask = tmp.access_flags,
-                        .dstAccessMask = access.access_flags,
-                        .oldLayout = tmp.layout,
-                        .newLayout = access.layout,
-                        .image = tmp.resource->as_image().image,
-                        .subresourceRange = subresource_range });
+                image_memory_barriers.push_back(
+                        vk::ImageMemoryBarrier{.srcAccessMask = tmp.access_flags,
+                                .dstAccessMask = access.access_flags,
+                                .oldLayout = tmp.layout,
+                                .newLayout = access.layout,
+                                .image = tmp.resource->as_image().vk_image(),
+                                .subresourceRange = subresource_range});
                 image_memory_barriers_temporaries.push_back(tmp_index);
                 num_image_memory_barriers++;
 
@@ -1115,7 +897,7 @@ struct schedule_ctx {
                 buffer_memory_barriers.push_back(
                         vk::BufferMemoryBarrier{.srcAccessMask = tmp.access_flags,
                                 .dstAccessMask = access.access_flags,
-                                .buffer = tmp.resource->as_buffer().buffer,
+                                .buffer = tmp.resource->as_buffer().vk_buffer(),
                                 .offset = 0,
                                 .size = VK_WHOLE_SIZE});
                 buffer_memory_barriers_temporaries.push_back(tmp_index);
@@ -1236,14 +1018,6 @@ struct schedule_ctx {
         // update live sets
         live -= kill;
         live_sets[task_index] = live;
-
-        /*fmt::print("LIVE:");
-        dump_set(live);
-        fmt::print(" | GEN:");
-        dump_set(gen);
-        fmt::print(" | KILL:");
-        dump_set(kill);
-        fmt::print("\n");*/
     }
 
     /// @brief builds set of tasks ready to be submitted
@@ -1308,7 +1082,7 @@ struct schedule_ctx {
         st.image_memory_barriers_offset = image_memory_barriers.size();
         st.buffer_memory_barriers_offset = buffer_memory_barriers.size();
         for (const auto& access : t.accesses) {
-            assign_device_memory(access.index);
+            assign_memory(access.index);
             memory_dependency(access.index, access.details, snn, queue_syncs,
                     queue_syncs_wait_dst_stages, st.num_image_memory_barriers,
                     st.num_buffer_memory_barriers, st.src_stage_mask, st.dst_stage_mask);
@@ -1419,50 +1193,52 @@ struct schedule_ctx {
         done_tasks.set(task_index, true);
     }
 
-    void bind_device_memory() {
-        const auto allocator = device->get_allocator();
+    void allocate_memory() {
+        const auto allocator = dev.get_allocator();
 
         fmt::print("Memory blocks:\n");
         for (size_t i = 0; i < allocations.size(); ++i) {
             const auto& alloc = allocations[i];
             fmt::print("   MEM_{}: size={} \n"
-                "           align={}\n"
-                "           flags={}\n"
-                "           memory_type_bits={}\n",
-                i, alloc.req.memreq.size, alloc.req.memreq.alignment, static_cast<int>(alloc.req.flags),
-                alloc.req.memreq.memoryTypeBits);
+                       "           align={}\n"
+                       "           preferred_flags={}\n"
+                       "           required_flags={}\n"
+                       "           memory_type_bits={}\n",
+                    i, alloc.req.memreq.size, alloc.req.memreq.alignment,
+                    to_string(alloc.req.preferred_flags), to_string(alloc.req.required_flags),
+                    alloc.req.memreq.memoryTypeBits);
         }
 
         fmt::print("\nMemory block assignments:\n");
         for (size_t i = 0; i < temporaries.size(); ++i) {
-            if (allocation_map[i] != (size_t)-1) {
+            if (allocation_map[i] != (size_t) -1) {
                 fmt::print("   {:02d} => MEM_{}\n", i, allocation_map[i]);
-            }
-            else {
+            } else {
                 fmt::print("   {:02d} => no memory\n", i);
             }
         }
 
         for (auto& a : allocations) {
-           const VmaAllocationCreateInfo create_info{
-                .flags = 0,
-                .usage = VMA_MEMORY_USAGE_UNKNOWN,
-                .requiredFlags = 0,
-                .preferredFlags = 0,
-                .memoryTypeBits = 0,
-                .pool = VK_NULL_HANDLE,
-                .pUserData = nullptr
-            };
+            const VmaAllocationCreateInfo create_info{.flags = 0,
+                    .usage = VMA_MEMORY_USAGE_UNKNOWN,
+                    .requiredFlags = 0,
+                    .preferredFlags = 0,
+                    .memoryTypeBits = 0,
+                    .pool = VK_NULL_HANDLE,
+                    .pUserData = nullptr};
 
-           if (auto r = vmaAllocateMemory(allocator, &a.req.memreq, &create_info, &a.alloc, &a.alloc_info); r != VK_SUCCESS) {
-               fmt::print("vmaAllocateMemory failed, VkResult({})\n", r);
+            if (auto r = vmaAllocateMemory(
+                        allocator, &a.req.memreq, &create_info, &a.alloc, &a.alloc_info);
+                    r != VK_SUCCESS) {
+                fmt::print("vmaAllocateMemory failed, VkResult({})\n", r);
             }
         }
 
         for (size_t i = 0; i < temporaries.size(); ++i) {
-            if (allocation_map[i] != (size_t)-1) {
+            if (allocation_map[i] != (size_t) -1) {
                 const auto i_alloc = allocation_map[i];
-                temporaries[i].resource->as_virtual_resource().bind_memory(device, allocations[i_alloc].alloc, allocations[i_alloc].alloc_info);
+                temporaries[i].resource->as_virtual_resource().bind_memory(dev.get_vk_device(),
+                        allocations[i_alloc].alloc, allocations[i_alloc].alloc_info);
             }
         }
     }
@@ -1554,7 +1330,7 @@ void dump_tasks(std::ostream& out, std::span<const task> tasks,
                     } else {
                         first = false;
                     }
-                    out << get_object_name(a.index, *temporaries[a.index].resource);
+                    out << temporaries[a.index].resource->name();
                     out << "(" << access_mask_to_string_compact(a.details.access_flags) << ")";
                 }
             }
@@ -1569,7 +1345,7 @@ void dump_tasks(std::ostream& out, std::span<const task> tasks,
                     } else {
                         first = false;
                     }
-                    out << get_object_name(a.index, *temporaries[a.index].resource);
+                    out << temporaries[a.index].resource->name();
                     out << "(" << access_mask_to_string_compact(a.details.access_flags) << ")";
                 }
             }
@@ -1588,7 +1364,7 @@ void dump_tasks(std::ostream& out, std::span<const task> tasks,
 }
 
 void queue_impl::enqueue_pending_tasks() {
-    const auto vk_device = device_->get_vk_device();
+    const auto vk_device = device_.get_vk_device();
 
     // --- short-circuit if no tasks
     if (batch_.tasks.empty()) { return; }
@@ -1596,11 +1372,23 @@ void queue_impl::enqueue_pending_tasks() {
     //---------------------------------------------------
     // main scheduling loop
 
+    // - determine next task
+    // - determine execution and memory barriers and cross-queue barriers
+    // - assign memory to resources
+    // - update resource liveness
+    // - allocate and bind memory to resources
+    // - update resources with the known final states
+    // - generate command buffers
+    // - submit batches
+    // - move all referenced resources into the wait queue
+    // - pacing (wait for batch N-2)
+    // - dump states
+
     schedule_ctx ctx{
             device_, queue_indices_, batch_.start_serial + 1, batch_.tasks, batch_.temporaries};
     while (ctx.schedule_next()) {}
     size_t cb_count = ctx.finish_pending_cb_batches();
-    ctx.bind_device_memory();
+    ctx.allocate_memory();
 
     // the state so far:
     // - `ctx.submitted_tasks` contains a list of all submitted tasks, in order
@@ -1672,7 +1460,11 @@ void queue_impl::enqueue_pending_tasks() {
                 .pSignalSemaphores = &timelines_[b.signal_snn.queue],
         };
 
-        device_->get_queue_by_index(b.signal_snn.queue).submit(1, &submit_info, nullptr);
+        if (auto result = device_.get_queue_by_index(b.signal_snn.queue)
+                                  .submit(1, &submit_info, nullptr);
+                result != vk::Result::eSuccess) {
+            fmt::print("vkQueueSubmit failed: {}\n", result);
+        }
     }
 
     // --- external synchronization ---
@@ -1943,8 +1735,8 @@ void handler::add_image_access(std::shared_ptr<detail::swapchain_image_impl> swa
 }
 
 //-----------------------------------------------------------------------------
-queue::queue(device& device, const queue_properties& props) :
-    impl_{std::make_unique<detail::queue_impl>(device.impl_, props)} {
+queue::queue(device& dev, const queue_properties& props) :
+    impl_{std::make_unique<detail::queue_impl>(dev, props)} {
 }
 
 void queue::enqueue_pending_tasks() {
@@ -1962,6 +1754,15 @@ detail::task& queue::create_render_pass_task(
 
 detail::task& queue::create_compute_pass_task(std::string_view name) noexcept {
     return impl_->create_compute_pass_task(name);
+}
+
+void* queue::get_staging_buffer(
+        size_t align, size_t size, vk::Buffer& out_buffer, vk::DeviceSize& out_offset) {
+    return impl_->get_staging_buffer(align, size, out_buffer, out_offset);
+}
+
+[[nodiscard]] device queue::get_device() {
+    return impl_->device_;
 }
 
 /*

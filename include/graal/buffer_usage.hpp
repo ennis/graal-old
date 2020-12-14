@@ -2,7 +2,6 @@
 #include <graal/bitmask.hpp>
 #include <vulkan/vulkan.hpp>
 
-
 namespace graal {
 
 enum class buffer_usage {

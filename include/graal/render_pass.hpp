@@ -59,16 +59,16 @@ public:
     }
 
     // color_attachment, color format
-    template<image_type D, bool Ext>
-    attachment(image<D, Ext> image, attachment_load_op load_op, attachment_store_op store_op,
+    template<image_type D>
+    attachment(image<D> image, attachment_load_op load_op, attachment_store_op store_op,
             clear_color_value clear_value = {}) :
         image_resource_{static_cast<std::shared_ptr<detail::image_impl>>(image.impl_)},
         load_op_{load_op}, store_op_{store_op} {
     }
 
     // color_attachment, depth-stencil format
-    template<image_type D, bool Ext>
-    attachment(image<D, Ext> image, attachment_load_op load_op, attachment_store_op store_op,
+    template<image_type D>
+    attachment(image<D> image, attachment_load_op load_op, attachment_store_op store_op,
             attachment_load_op stencil_load_op, attachment_store_op stencil_store_op,
             clear_depth_stencil_value clear_value = {}) :
         image_resource_{static_cast<std::shared_ptr<detail::image_impl>>(image.impl_)},

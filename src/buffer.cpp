@@ -1,45 +1,80 @@
 #include <graal/buffer.hpp>
 
 namespace graal::detail {
-void buffer_impl::bind_memory(device_impl_ptr dev, VmaAllocation allocation,
-                              const VmaAllocationInfo& allocation_info) 
+
+namespace {
+vk::Buffer create_buffer(vk::Device vk_device, buffer_usage usage, std::size_t byte_size,
+        const buffer_properties& props) {
+    vk::BufferCreateInfo create_info{.size = byte_size,
+            .usage = static_cast<vk::BufferUsageFlags>(static_cast<int>(usage)),
+            .sharingMode = vk::SharingMode::eConcurrent,  // TODO
+            .queueFamilyIndexCount = 0,
+            .pQueueFamilyIndices = nullptr};
+    return vk_device.createBuffer(create_info);
+}
+
+/*void create_buffer_with_allocation(vk::Device vk_device, VmaAllocator allocator,
+        buffer_usage& usage, std::size_t byte_size, const buffer_properties& props,
+        //std::span<std::byte> initial_bytes,
+        vk::Buffer& out_buffer, VmaAllocation& out_alloc, VmaAllocationInfo& out_alloc_info) 
 {
-  const auto vk_buffer = get_vk_buffer(dev);
-  const auto vk_device = dev->get_vk_device();
-  allocation_ = allocation;
-  allocation_info_ = allocation_info;
-  vk_device.bindBufferMemory(vk_buffer, allocation_info.deviceMemory,
-                             allocation_info.offset);
-  allocated = true;
+    vk::BufferCreateInfo create_info{.size = byte_size,
+            .usage = static_cast<vk::BufferUsageFlags>(static_cast<int>(usage)),
+            .sharingMode = vk::SharingMode::eConcurrent,  // TODO
+            .queueFamilyIndexCount = 0,
+            .pQueueFamilyIndices = nullptr};
+
+    VmaAllocationCreateInfo alloc_create_info{.flags = 0,
+            .usage = VMA_MEMORY_USAGE_UNKNOWN,
+            .requiredFlags = static_cast<VkMemoryPropertyFlags>(props.required_flags),
+            .preferredFlags = static_cast<VkMemoryPropertyFlags>(props.preferred_flags),
+            .memoryTypeBits = 0,
+            .pool = VK_NULL_HANDLE,
+            .pUserData = nullptr};
+
+    if (auto result = vmaCreateBuffer(allocator,
+                reinterpret_cast<const VkBufferCreateInfo*>(&create_info), &alloc_create_info,
+                reinterpret_cast<VkBuffer*>(&out_buffer), &out_alloc, &out_alloc_info);
+            result != VK_SUCCESS) {
+        throw std::runtime_error{"vmaCreateBuffer failed"};
+    }
+}*/
+
+}  // namespace
+
+// construct uninitialized from size
+buffer_impl::buffer_impl(device dev, buffer_usage usage, std::size_t byte_size,
+        const buffer_properties& properties) :
+    buffer_resource{create_buffer(dev.get_vk_device(), usage, byte_size, properties), byte_size},
+    device_{std::move(dev)}, usage_{usage}, byte_size_{byte_size} {
 }
 
-allocation_requirements
-buffer_impl::get_allocation_requirements(device_impl_ptr dev) {
-  const auto                   vk_device = dev->get_vk_device();
-  const auto                   vk_buffer = get_vk_buffer(dev);
-  const vk::MemoryRequirements mem_req =
-      vk_device.getBufferMemoryRequirements(vk_buffer);
-  return allocation_requirements{.flags = allocation_flags_,
-        .memreq = mem_req };
+/*buffer_impl::buffer_impl(device_impl_ptr device, buffer_usage usage, std::size_t byte_size,
+        const buffer_properties& properties, std::span<std::byte> initial_bytes) :
+    buffer_resource{
+            create_buffer(device->get_vk_device(), usage, byte_size, properties), byte_size},
+    device_{std::move(device)}, usage_{usage}, byte_size_{byte_size}, props_{properties}
+{
+    // force memory visible in host
+}*/
+
+buffer_impl::~buffer_impl() {
+    if (buffer_) { device_.get_vk_device().destroyBuffer(buffer_); }
 }
 
-vk::Buffer buffer_impl::get_vk_buffer(device_impl_ptr dev) {
-  if (buffer_resource::buffer) {
-    return buffer_resource::buffer;
-  }
-
-  vk::BufferCreateInfo create_info{.size = byte_size_,
-                                   .usage = static_cast<vk::BufferUsageFlags>(static_cast<int>(usage_)),
-                                   .sharingMode =
-                                       vk::SharingMode::eConcurrent, // TODO
-                                   .queueFamilyIndexCount = 0,
-                                   .pQueueFamilyIndices = nullptr};
-
-  auto vk_device = dev->get_vk_device();
-
-  // init fields of buffer_resource
-  buffer_resource::buffer = vk_device.createBuffer(create_info);
-  buffer_resource::size = byte_size_;
-  return buffer_resource::buffer;
+void buffer_impl::bind_memory(
+        vk::Device device, VmaAllocation allocation, const VmaAllocationInfo& allocation_info) {
+    allocation_ = allocation;
+    allocation_info_ = allocation_info;
+    device.bindBufferMemory(buffer_, allocation_info.deviceMemory, allocation_info.offset);
+    allocated = true;
 }
-} // namespace graal::detail
+
+allocation_requirements buffer_impl::get_allocation_requirements(vk::Device device) {
+    const vk::MemoryRequirements mem_req = device.getBufferMemoryRequirements(buffer_);
+    return allocation_requirements{.memreq = mem_req,
+            .required_flags = props_.required_flags,
+            .preferred_flags = props_.preferred_flags};
+}
+
+}  // namespace graal::detail

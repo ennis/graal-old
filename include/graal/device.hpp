@@ -1,5 +1,6 @@
 #pragma once
 #include <graal/detail/recycler.hpp>
+#include <graal/image_type.hpp>
 #include <graal/queue_class.hpp>
 
 #include <vk_mem_alloc.h>
@@ -9,12 +10,12 @@
 
 namespace graal {
 
-    struct queue_indices {
-        uint8_t graphics;
-        uint8_t compute;
-        uint8_t transfer;
-        uint8_t present;
-    };
+struct queue_indices {
+    uint8_t graphics;
+    uint8_t compute;
+    uint8_t transfer;
+    uint8_t present;
+};
 
 namespace detail {
 
@@ -53,7 +54,7 @@ public:
     }
 
     [[nodiscard]] vk::Queue get_queue_by_index(uint8_t index) const noexcept {
-        return queues_[(size_t)index];
+        return queues_[(size_t) index];
     }
 
 private:
@@ -77,12 +78,17 @@ using device_impl_ptr = std::shared_ptr<device_impl>;
 
 }  // namespace detail
 
-
 /// @brief Vulkan instance and device
 class device {
     friend class queue;
     friend class detail::queue_impl;
     friend class detail::swapchain_impl;
+
+    template<image_type Type>
+    friend class image;
+
+    template<typename T>
+    friend class buffer;
 
 public:
     using impl_t = std::shared_ptr<detail::device_impl>;

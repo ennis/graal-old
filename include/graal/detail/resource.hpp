@@ -1,8 +1,8 @@
 #pragma once
+#include <graal/bitmask.hpp>
 #include <graal/detail/named_object.hpp>
 #include <graal/detail/sequence_number.hpp>
 #include <graal/device.hpp>
-#include <graal/bitmask.hpp>
 #include <graal/image_format.hpp>
 #include <graal/image_type.hpp>
 
@@ -23,8 +23,9 @@ GRAAL_BITMASK(allocation_flags)
 
 /// @brief
 struct allocation_requirements {
-    allocation_flags flags;
     VkMemoryRequirements memreq;
+    vk::MemoryPropertyFlags required_flags{};
+    vk::MemoryPropertyFlags preferred_flags{};
 };
 
 enum class resource_type {
@@ -69,13 +70,13 @@ public:
         return type_;
     }
 
-    void realize(device_impl_ptr device);
-
     void add_user_ref() const noexcept {
         user_ref_count_.fetch_add(1, std::memory_order_relaxed);
     }
 
-    [[nodiscard]] uint32_t user_ref_count() const noexcept { return user_ref_count_; }
+    [[nodiscard]] uint32_t user_ref_count() const noexcept {
+        return user_ref_count_;
+    }
 
     void release_user_ref() const noexcept {
         // relaxed should be sufficient since we're not using the counter for synchronization
@@ -87,12 +88,29 @@ public:
     }
 
     bool allocated = false;  // set to true once bind_memory has been called successfully
-    submission_number last_write;   // submission number of the last write
-    std::array<serial_number, max_queues> last_access;    // serial numbers of the last read accesses for each queue
+    submission_number last_write;  // submission number of the last write
+    std::array<serial_number, max_queues>
+            last_access;  // serial numbers of the last read accesses for each queue
 
-    vk::ImageLayout last_layout = vk::ImageLayout::eUndefined;            // last known image layout, ignored for buffers
+    // Issues:
+    // - layouts can be different between subresources
+    // - current pipeline stages can be different between two disjoint parts of a resource
+    // - same for memory accesses...
+
+    // => fine-grained access tracking?
+    // - would need to store a list of "access regions" and split/merge them as needed: a nightmare.
+    //
+    // Maybe "resource" is the wrong abstraction?
+    // -> temporaries != resource
+    // -> a temporary can be a part of a resource
+    // -> but temporaries can overlap. arghhhh!
+
+
+    vk::ImageLayout last_layout =
+            vk::ImageLayout::eUndefined;  // last known image layout, ignored for buffers
+    
     vk::AccessFlags last_access_flags = {};
-    vk::PipelineStageFlags last_pipeline_stages;      
+    vk::PipelineStageFlags last_pipeline_stages;
     vk::Semaphore wait_semaphore =
             nullptr;  // semaphore to synchronize on before using the resource (updated as the resource is used in a queue)
     // TODO use a unique_handle pattern to signal ownership. Not the one provided by vulkan-hpp though because
@@ -111,50 +129,71 @@ using resource_ptr = std::shared_ptr<resource>;
 /// @brief Base class for image resources.
 class image_resource : public resource {
 public:
-    image_resource(resource_type type) : resource{ type }
-    {}
+    image_resource(resource_type type, vk::Image image, image_format format) :
+        resource{type}, image_{image}, format_{format} {
+    }
 
-    vk::Image image = nullptr;
-    image_format format = image_format::undefined;
+    [[nodiscard]] vk::Image vk_image() const noexcept {
+        return image_;
+    }
+    [[nodiscard]] image_format format() const noexcept {
+        return format_;
+    }
+
+protected:
+    vk::Image image_ = nullptr;
+    image_format format_ = image_format::undefined;
 };
-
 
 /// @brief Base class for buffer resources.
 class buffer_resource : public resource {
 public:
-    buffer_resource() : resource{ resource_type::buffer }
-    {}
+    buffer_resource() :
+        resource{ resource_type::buffer }, buffer_{ nullptr }, byte_size_{ 0 } {
+    }
 
-    vk::Buffer buffer = nullptr;
-    size_t size = 0;
+    buffer_resource(vk::Buffer buffer, size_t byte_size) :
+        resource{resource_type::buffer}, buffer_{buffer}, byte_size_{byte_size} {
+    }
+
+    [[nodiscard]] vk::Buffer vk_buffer() const noexcept {
+        return buffer_;
+    }
+    [[nodiscard]] size_t byte_size() const noexcept {
+        return byte_size_;
+    }
+
+protected:
+    vk::Buffer buffer_ = nullptr;
+    size_t byte_size_ = 0;
 };
-
 
 /// @brief Base interface for resources whose memory is managed by the queue.
 class virtual_resource {
     friend class queue_impl;
+
 public:
     /// @brief Returns the memory requirements of the resource.
-    virtual allocation_requirements get_allocation_requirements(device_impl_ptr dev) = 0;
+    virtual allocation_requirements get_allocation_requirements(vk::Device device) = 0;
 
     /// @brief
     /// @param other
-    virtual void bind_memory(
-        device_impl_ptr dev, VmaAllocation allocation, const VmaAllocationInfo& allocation_info) = 0;
+    virtual void bind_memory(vk::Device device, VmaAllocation allocation,
+            const VmaAllocationInfo& allocation_info) = 0;
 };
 
 using virtual_resource_ptr = std::shared_ptr<virtual_resource>;
 
-
-/// @brief 
-/// @tparam T 
+/// @brief
+/// @tparam T
 template<typename T>
 class user_resource_ptr {
     static_assert(std::is_base_of_v<resource, T>);
 
 public:
     constexpr user_resource_ptr() noexcept = default;
-    constexpr user_resource_ptr(std::nullptr_t) noexcept {}
+    constexpr user_resource_ptr(std::nullptr_t) noexcept {
+    }
 
     user_resource_ptr(std::shared_ptr<T> ptr) noexcept : ptr_{std::move(ptr)} {
         add_ref();
