@@ -849,6 +849,10 @@ For buffers, we need to maintain a dynamic list of ranges for each state.
 [Granite](https://github.com/Themaister/Granite/blob/master/renderer/render_graph.hpp) doesn't track accesses at subresource granularity.
 [Diligent](https://diligentgraphics.com/2018/12/09/resource-state-management/) allows transitions on subresource ranges, 
 but does not seem to track states per subresource (https://github.com/DiligentGraphics/DiligentCore/blob/36f11d692acd2272c4b15b34a3753f565310a074/Graphics/GraphicsEngineVulkan/src/DeviceContextVkImpl.cpp#L2245), so I'm not sure automatic transitions even work correctly.
+EDIT: the article says this:
+
+	The state is tracked for the whole resource only. Individual mip levels and/or texture array slices cannot be transitioned.
+
 [V-EZ](https://github.com/GPUOpen-LibrariesAndSDKs/V-EZ/blob/master/Source/Core/PipelineBarriers.cpp) implements fine-grained resource tracking, which is impressive:
 
 	IMPLEMENTATION NOTES:    
@@ -926,10 +930,6 @@ That said, existing rendergraph APIs do use this pattern. (e.g. https://www.khro
 So don't change it for now.
 
 
-
-## Tracking granularity is an implementation detail
-
-
 ## Fine-grained access tracking
 Makes less sense to store it per-resource.
 
@@ -960,9 +960,54 @@ The big issue is to update this list with new facts, given that the new regions 
 	- when to remove entries from the map?
 - note that D3D12 doesn't have memory barriers for ranges of buffers (the whole buffer is transitioned)
 
-## The problem with presentation
+## Per-subresource state tracking?
+- currently done at the resource level
+- doing it for arbitrary buffer ranges seems overkill (for instance, D3D12 can't transition buffer ranges)
+- however, both Vulkan and D3D12 can have subresources (image layer, mipmap) of the same resource in different states 
+
+## Simplify barrier emission
+- resource_state
+
+## In which cases is it useful to transition individual subresources?
+- generating mip maps
+- computing an image pyramid
+- downsampling
+In all of those cases it seems that the individual subresource transitions could be "hidden" inside the pass,
+and not exposed outside. 
+
+
+# The problem with presentation
 The main problem is that presentation doesn't support timeline semaphores, so it complicates
 synchronization when accessing a swapchain image.
+
+## Simplify swapchain-related things
+Currently, 4 classes:
+- swapchain, swapchain_impl, swapchain_image, swapchain_image_impl
+
+Idea: make swapchain an image resource that represents the current backbuffer.
+(Can't acquire two images at once, but why would that be useful?)
+It would make more sense than the current swapchain_image: `swapchain_image` has shared
+pointer semantics, but `present` is supposed to consume the image (ownership transfer),
+which invalidates all other references.
+
+## Resource tracking for swapchains?
+- First use: image ready
+- Before handoff to presentation: rendering finished
+When presenting, immediately acquire the next image.
+
+
+# Remove resource wrappers?
+I.e. merge image and image_impl, etc. Expose a pointer type (user_resource_ptr) instead of a wrapper object.
+Pros:
+- less duplicated code
+- null state (is that a pro?)
+Cons:
+- null state
+- no pimpl (but that's already the case)
+- no direct constructors (must use a factory function to create the pointer)
+
+Why does SYCL have wrappers?
+- is it for pImpl?
 
 
 ## Log

@@ -65,12 +65,15 @@ graal::image_2d load_texture(graal::queue& queue, const std::filesystem::path& p
     image_input->read_image(0, 0, 0, spec.nchannels - 1, fmt_tydesc, staging_mem, buffer_px_stride);
 
     queue.compute_pass("load_image", [=](graal::handler& h) {
+
+        // XXX 
         h.add_image_access(texture, vk::AccessFlagBits::eTransferWrite,
                 vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eTransfer,
                 vk::ImageLayout::eTransferDstOptimal);
 
         return [=](vk::CommandBuffer cb) {
-            vk::BufferImageCopy region{.bufferOffset = 0,
+            vk::BufferImageCopy region{
+                .bufferOffset = 0,
                     .bufferRowLength = buffer_row_length,
                     .bufferImageHeight = (uint32_t) spec.height,
                     .imageSubresource =

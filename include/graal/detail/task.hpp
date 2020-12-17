@@ -30,6 +30,8 @@ struct resource_access_details {
     vk::AccessFlags access_flags;
     vk::PipelineStageFlags input_stage;
     vk::PipelineStageFlags output_stage;
+    /// @brief Whether sync needs a binary semaphore
+    //bool binary_semaphore = false;  
 };
 
 
@@ -40,10 +42,11 @@ enum class task_type {
     present
 };
 
+// maybe "pass" would be more appropriate?
 struct task {
     struct present_details {
         vk::SwapchainKHR swapchain;
-        vk::Image image;
+        uint32_t image_index;
     };
 
     struct render_details {
@@ -67,11 +70,11 @@ struct task {
     /// @brief Constructs a present task
     /// @param swapchain 
     /// @param image 
-    task(vk::SwapchainKHR swapchain, vk::Image image) {
+    task(vk::SwapchainKHR swapchain, uint32_t image_index) {
         type_ = task_type::present;
         new (&detail.present) present_details;
         detail.present.swapchain = swapchain;
-        detail.present.image = image;
+        detail.present.image_index = image_index;
     }
 
     /// @brief Constructs a renderpass task

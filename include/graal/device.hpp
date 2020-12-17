@@ -124,16 +124,14 @@ public:
     [[nodiscard]] vk::Queue get_queue_by_index(uint8_t index) const noexcept {
         return impl_->get_queue_by_index(index);
     }
-
-private:
     [[nodiscard]] vk::Semaphore create_binary_semaphore() {
         return impl_->create_binary_semaphore();
     }
-
     void recycle_binary_semaphore(vk::Semaphore semaphore) {
         impl_->recycle_binary_semaphore(semaphore);
     }
 
+private:
     impl_t impl_;
 };
 

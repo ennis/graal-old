@@ -53,9 +53,9 @@ struct clear_depth_stencil_value {
 class attachment {
 public:
     // color_attachment, color format
-    attachment(swapchain_image image, attachment_load_op load_op, attachment_store_op store_op,
+    attachment(swapchain swapchain, attachment_load_op load_op, attachment_store_op store_op,
             clear_color_value clear_value = {}) :
-        image_resource_{static_cast<std::shared_ptr<detail::swapchain_image_impl>>(image.impl_)} {
+        image_resource_{std::move(swapchain.impl_)} {
     }
 
     // color_attachment, color format
@@ -77,7 +77,7 @@ public:
     }
 
 private:
-    detail::resource_ptr image_resource_;
+    std::shared_ptr<detail::image_resource> image_resource_;
     attachment_load_op load_op_;
     attachment_store_op store_op_;
     attachment_load_op stencil_load_op_;

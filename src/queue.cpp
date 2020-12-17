@@ -88,11 +88,14 @@ struct temporary {
 
     /// @brief The resource
     resource_ptr resource;
-    std::array<serial_number, max_queues> access_sn;  // last access SN
-    submission_number
-            write_snn;  // last write SN (a dummy one is first assigned when building the DAG)
-    vk::ImageLayout layout =
-            vk::ImageLayout::eUndefined;  // last known image layout, ignored for buffers
+    // last access SN
+    std::array<serial_number, max_queues> access_sn;
+    // last write SN (a dummy one is first assigned when building the DAG)
+    submission_number write_snn;
+    // last known image layout, ignored for buffers
+    vk::ImageLayout layout = vk::ImageLayout::eUndefined;
+    // binary semaphore to wait for
+    vk::Semaphore wait_semaphore;
     vk::AccessFlags access_flags{};
     vk::PipelineStageFlags stages{};
 };
@@ -216,30 +219,19 @@ struct batch_thread_resources {
     command_buffer_pool cb_pool;
 };
 
-/// @brief Represents a batch
-struct batch {
+struct submitted_batch {
     serial_number start_serial = 0;
-    /// @brief all resources referenced in the batch (called "temporaries" for historical reasons)
-    std::vector<temporary> temporaries;
-    /// @brief tasks
-    std::vector<task> tasks;
+    /// @brief Serials to wait for
+    per_queue_wait_serials end_serials{};
     /// @brief Per-thread resources
     std::vector<batch_thread_resources> threads;
+    /// @brief All resources referenced in the batch.
+    std::vector<resource_ptr> resources;
     /// @brief Semaphores used within the batch
     std::vector<vk::Semaphore> semaphores;
-
-    /// @brief Returns the last sequence number of the batch.
-    serial_number finish_serial() const noexcept {
-        return start_serial + tasks.size();
-    }
-
-    /// @brief Sequence number of the next task.
-    serial_number next_serial() const noexcept {
-        return finish_serial() + 1;
-    }
 };
 
-static void dump_batch(batch& b) {
+/*static void dump_batch(batch& b) {
     fmt::print("=== batch (SN{} .. SN{}) ===\n", b.start_serial, b.finish_serial());
 
     fmt::print("Temporaries:\n");
@@ -288,7 +280,7 @@ static void dump_batch(batch& b) {
         }
         task_index++;
     }
-}
+}*/
 
 //-----------------------------------------------------------------------------
 class queue_impl {
@@ -299,14 +291,11 @@ public:
     ~queue_impl();
 
     void enqueue_pending_tasks();
-    void present(swapchain_image&& image);
+    void present(swapchain swapchain);
 
     void wait_for_task(uint64_t sequence_number);
 
-    const task* get_submitted_task(uint64_t sequence_number) const noexcept;
-
     const task* get_unsubmitted_task(uint64_t sequence_number) const noexcept;
-
     task* get_unsubmitted_task(uint64_t sequence_number) noexcept {
         return const_cast<task*>(
                 static_cast<const queue_impl&>(*this).get_unsubmitted_task(sequence_number));
@@ -315,15 +304,15 @@ public:
     // returned reference only valid until next call to create_task or present.
     [[nodiscard]] task& create_render_pass_task(
             std::string_view name, const render_pass_desc& rpd) noexcept {
-        return init_task(batch_.tasks.emplace_back(rpd), name);
+        return init_task(tasks_.emplace_back(rpd), name);
     }
 
     // returned reference only valid until next call to create_task or present.
     [[nodiscard]] task& create_compute_pass_task(std::string_view name) noexcept {
-        return init_task(batch_.tasks.emplace_back(), name);
+        return init_task(tasks_.emplace_back(), name);
     }
 
-    void add_task_dependency(task& t, serial_number before, bool use_binary_semaphore);
+    void add_task_dependency(task& t, submission_number before, bool use_binary_semaphore);
 
     void add_resource_dependency(
             task& t, resource_ptr resource, const resource_access_details& access);
@@ -359,11 +348,16 @@ private:
     device device_;
     queue_properties props_;
     queue_indices queue_indices_;
-    batch batch_;
     serial_number last_serial_ = 0;
     serial_number completed_serial_ = 0;
-    std::deque<batch> in_flight_batches_;
     vk::Semaphore timelines_[max_queues];
+
+    // --- current batch ---
+    serial_number batch_start_serial_;
+    std::vector<temporary> temporaries_;
+    std::vector<task> tasks_;
+
+    std::deque<submitted_batch> in_flight_batches_;
 
     staging_pool staging_;
     recycler<staging_buffer> staging_buffers_;
@@ -392,13 +386,13 @@ queue_impl::~queue_impl() {
 }
 
 size_t queue_impl::get_resource_tmp_index(resource_ptr resource) {
-    const auto next_tmp_index = batch_.temporaries.size();
+    const auto next_tmp_index = temporaries_.size();
     const auto result = tmp_indices.insert({resource.get(), next_tmp_index});
     if (result.second) {
         // just inserted, create temporary
         const auto last_write = resource->last_write.serial;
         // init temporary
-        batch_.temporaries.emplace_back(std::move(resource));
+        temporaries_.emplace_back(std::move(resource));
     }
     return result.first->second;
 }
@@ -420,44 +414,14 @@ command_buffer_pool queue_impl::get_command_buffer_pool() {
 
 bool queue_impl::writes_are_user_observable(resource& r) const noexcept {
     // writes to the resources might be seen if there are still user handles to the resource
-    return r.last_write.serial > batch_.start_serial && !r.has_user_refs();
-}
-
-/*void queue_impl::finalize_batch() {
-            // fill successors array for each task
-            for (size_t i = 0; i < batch_.tasks.size(); ++i) {
-                auto& t = batch_.tasks[i];
-                for (auto pred : t->preds) {
-                    auto& pred_succ = batch_.tasks[pred]->succs;
-                    if (std::find(pred_succ.begin(), pred_succ.end(), i) == pred_succ.end()) {
-                        pred_succ.push_back(i);
-                    }
-                }
-            }
-        }*/
-
-const task* queue_impl::get_submitted_task(uint64_t sequence_number) const noexcept {
-    uint64_t start;
-    uint64_t finish;
-
-    for (auto&& b : in_flight_batches_) {
-        start = b.start_serial;
-        finish = b.finish_serial();
-        if (sequence_number <= start) { return nullptr; }
-        if (sequence_number > start && sequence_number <= finish) {
-            const auto i = sequence_number - start - 1;
-            return &b.tasks[i];
-        }
-    }
-
-    return nullptr;
+    return r.last_write.serial > batch_start_serial_ && !r.has_user_refs();
 }
 
 const task* queue_impl::get_unsubmitted_task(uint64_t sequence_number) const noexcept {
-    if (sequence_number <= batch_.start_serial) { return nullptr; }
-    if (sequence_number <= batch_.finish_serial()) {
-        const auto i = sequence_number - batch_.start_serial - 1;
-        return &batch_.tasks[i];
+    if (sequence_number <= batch_start_serial_) { return nullptr; }
+    if (sequence_number < last_serial_) {
+        const auto i = sequence_number - batch_start_serial_ - 1;
+        return &tasks_[i];
     }
     return nullptr;
 }
@@ -509,15 +473,86 @@ struct buffer_memory_barrier {
     vk::AccessFlags dst_access_mask;
 };
 
-/// @brief Represents a queue submission (call to vkQueueSubmit)
-struct queue_submit {
-    std::array<serial_number, max_queues> wait_sn{};
-    std::array<vk::PipelineStageFlags, max_queues> wait_dst_stages{};
+using per_queue_wait_serials = std::array<serial_number, max_queues>;
+using per_queue_wait_dst_stages = std::array<vk::PipelineStageFlags, max_queues>;
+
+/// @brief Represents a queue operation (either a call to vkQueueSubmit or vkQueuePresent)
+struct queue_submission {
+    per_queue_wait_serials wait_sn{};
+    per_queue_wait_dst_stages wait_dst_stages{};
     serial_number first_sn;
     submission_number signal_snn;
     size_t cb_offset = 0;
     size_t cb_count = 0;
+    std::vector<vk::Semaphore> wait_binary_semaphores;
+    std::vector<vk::Semaphore> signal_binary_semaphores;
+    vk::Semaphore render_finished;
+    std::vector<vk::SwapchainKHR> swapchains;
+    std::vector<uint32_t> swpachain_image_indices;
+
+    [[nodiscard]] bool is_empty() const noexcept {
+        return (cb_count == 0) && signal_binary_semaphores.empty() && render_finished;
+    }
+
+    void submit(vk::Queue queue, std::span<vk::CommandBuffer> command_buffers,
+            std::span<vk::Semaphore> timelines) {
+        const auto signal_semaphore_value = signal_snn.serial;
+
+        std::vector<vk::Semaphore> signal_semaphores;
+        signal_semaphores.push_back(timelines[signal_snn.queue]);
+        signal_semaphores.insert(signal_semaphores.end(), signal_binary_semaphores.begin(),
+                signal_binary_semaphores.end());
+        if (render_finished) { signal_semaphores.push_back(render_finished); }
+
+        std::vector<vk::Semaphore> wait_semaphores;
+        std::vector<uint64_t> wait_semaphore_values;
+        for (size_t i = 0; i < wait_sn.size(); ++i) {
+            if (wait_sn[i]) {
+                wait_semaphores.push_back(timelines[i]);
+                wait_semaphore_values.push_back(wait_sn[i]);
+            }
+        }
+        wait_semaphores.insert(wait_semaphores.end(), wait_binary_semaphores.begin(),
+                wait_binary_semaphores.end());
+
+        const vk::TimelineSemaphoreSubmitInfo timeline_submit_info{
+                .waitSemaphoreValueCount = (uint32_t) wait_semaphore_values.size(),
+                .pWaitSemaphoreValues = wait_semaphore_values.data(),
+                .signalSemaphoreValueCount = 1,
+                .pSignalSemaphoreValues = &signal_semaphore_value};
+
+        vk::SubmitInfo submit_info{.pNext = &timeline_submit_info,
+                .waitSemaphoreCount = (uint32_t) wait_semaphores.size(),
+                .pWaitSemaphores = wait_semaphores.data(),
+                .pWaitDstStageMask = wait_dst_stages.data(),
+                .commandBufferCount = (uint32_t) cb_count,
+                .pCommandBuffers = command_buffers.data() + cb_offset,
+                .signalSemaphoreCount = (uint32_t) signal_semaphores.size(),
+                .pSignalSemaphores = signal_semaphores.data()};
+
+        if (auto result = queue.submit(1, &submit_info, nullptr); result != vk::Result::eSuccess) {
+            fmt::print("vkQueueSubmit failed: {}\n", result);
+        }
+
+        if (render_finished) {
+            // terminate with a present
+            vk::PresentInfoKHR present_info{.waitSemaphoreCount = 1,
+                    .pWaitSemaphores = &render_finished,
+                    .swapchainCount = swapchains.size(),
+                    .pSwapchains = swapchains.data(),
+                    .pImageIndices = swpachain_image_indices.data()};
+
+            queue.presentKHR(present_info);
+        }
+    }
 };
+
+// batch (and submission_builder)
+// command_buffer_pool
+// submitted_task
+// task
+// temporary
+// queue_submission
 
 struct submitted_task {
     vk::PipelineStageFlags src_stage_mask;
@@ -540,6 +575,59 @@ struct device_memory_allocation {
     allocation_requirements req;
     VmaAllocation alloc;
     VmaAllocationInfo alloc_info;
+};
+
+struct submission_builder {
+    void start_batch(uint32_t queue, per_queue_wait_serials wait_sn,
+            per_queue_wait_dst_stages wait_dst_stages,
+            std::vector<vk::Semaphore> wait_binary_semaphores) {
+        for (size_t iq = 0; iq < max_queues; ++iq) {
+            queue_submission& qs = pending[iq];
+            if (wait_sn[iq] || iq == queue) { end_batch(iq); }
+        }
+
+        pending[queue].wait_sn = wait_sn;
+        pending[queue].wait_dst_stages = wait_dst_stages;
+        pending[queue].wait_binary_semaphores = std::move(wait_binary_semaphores);
+    }
+
+    void end_batch(uint32_t queue) {
+        if (pending[queue].is_empty()) { return; }
+
+        pending[queue].cb_offset = next_cb_index;
+        submits.push_back(pending[queue]);
+        next_cb_index += pending[queue].cb_count;
+        pending[queue] = {};
+    }
+
+    void batch_command_buffer(submission_number snn) {
+        pending[snn.queue].cb_count++;
+        pending[snn.queue].signal_snn = snn;
+        if (pending[snn.queue].cb_count == 0) {
+            // set submission SN
+            pending[snn.queue].first_sn = snn.serial;
+        }
+    }
+
+    void end_batch_and_present(uint32_t queue, std::vector<vk::SwapchainKHR> swapchains,
+            std::vector<uint32_t> swpachain_image_indices, vk::Semaphore render_finished) {
+        // end the batch with a present (how considerate!)
+        pending[queue].render_finished = render_finished;
+        pending[queue].swapchains = std::move(swapchains);
+        pending[queue].swpachain_image_indices = std::move(swpachain_image_indices);
+        end_batch(queue);
+    }
+
+    size_t finish() {
+        for (size_t i = 0; i < max_queues; ++i) {
+            if (!pending[i].is_empty()) { end_batch(i); }
+        }
+        return next_cb_index;
+    }
+
+    size_t next_cb_index = 0;
+    std::array<queue_submission, max_queues> pending{};
+    std::vector<queue_submission> submits;
 };
 
 struct schedule_ctx {
@@ -577,12 +665,11 @@ struct schedule_ctx {
     // memory_dependency state for the task being submitted
     //std::vector<submission_number> current_queue_syncs;
 
+    // --- queue batches
+    submission_builder submission_builder;
+
     // --- submits
-    std::array<queue_submit, max_queues> pending_submits{};
-    std::vector<queue_submit> submits;
     std::vector<submitted_task> submitted_tasks;
-    //std::vector<size_t> cb_index_map;
-    size_t next_cb_index = 0;
     std::vector<vk::BufferMemoryBarrier> buffer_memory_barriers;
     std::vector<vk::ImageMemoryBarrier> image_memory_barriers;
     std::vector<size_t>
@@ -803,44 +890,69 @@ struct schedule_ctx {
         }
     }
 
-    /// @brief Handles a memory dependency on a resource.
-    /// @param resource the resource
-    /// @param access how the resource is accessed in the task
-    /// @param sn task serial number
-    /// @param pstate known pipeline state
-    /// @param src_stage_flags (output) source pipeline barrier stages
-    /// @param dst_stage_flags (output) destination pipeline barrier stages
-    /// @param queue_syncs (output) submission numbers to wait for; if it is not empty, then
-    /// a semaphore wait must happen (corresponds to a vkQueueSubmit)
-    ///
-    /// This function updates the required src_stage_flags and dst_stage_flags of pipeline barrier.
-    /// It also updates the `buffer_memory_barriers` and `image_memory_barriers` members
-    /// by appending the necessary memory barriers.
+    /// @brief Infers the necessary barriers for the given access in the given task.
+    /// @param tmp_index index of the temporary
+    /// @param access access details
+    /// @param snn task submission number (queue and serial)
+    /// @param wait_sn (output) serials to wait for on each queue
+    /// @param wait_dst_stages (output) destination stages for each queue wait
+    /// @param num_image_memory_barriers (output) number of image memory barriers written (to image_memory_barriers)
+    /// @param num_buffer_memory_barriers (output) number of buffer memory barriers written (to buffer_memory_barriers)
+    /// @param src_stage_flags (output) source stage mask for the pipeline barrier on the submission queue
+    /// @param dst_stage_flags (output) destination stage mask for the pipeline barrier
+    /// @param out_wait_semaphores (output) semaphores to wait for
     void memory_dependency(size_t tmp_index, const resource_access_details& access,
-            submission_number snn, std::array<serial_number, max_queues>& queue_syncs,
-            std::array<vk::PipelineStageFlags, max_queues>& queue_syncs_wait_dst_stages,
-            uint32_t& num_image_memory_barriers, uint32_t& num_buffer_memory_barriers,
-            vk::PipelineStageFlags& src_stage_flags, vk::PipelineStageFlags& dst_stage_flags) {
+            submission_number snn, per_queue_wait_serials& wait_sn,
+            per_queue_wait_dst_stages& wait_dst_stages, uint32_t& num_image_memory_barriers,
+            uint32_t& num_buffer_memory_barriers, vk::PipelineStageFlags& src_stage_mask,
+            vk::PipelineStageFlags& dst_stage_mask,
+            std::vector<vk::Semaphore>& out_wait_semaphores) {
         auto& tmp = temporaries[tmp_index];
-        const bool writing = is_write_access(access.access_flags) || access.layout != tmp.layout;
         const bool reading = is_read_access(access.access_flags);
+
+        // HACK: there can be only one wait operation per binary semaphore, so only this task can wait on the resource using
+        // the binary semaphore.
+        // Other tasks that read from the resource concurrently (on other queues) cannot synchronize on the semaphore directly,
+        // so instead we force those to synchronize on this task, *even if the task is not writing to the resource*.
+        // We do so by "upgrading" the access to a write access.
+        // This is suboptimal, as it introduces a false dependency between this task and concurrent
+        // tasks accessing the resource. The "proper" solution here would be to have multiple semaphores,
+        // but we can't know in advance (i.e. across batches) how many of those we would need.
+        //
+        // Note that binary semaphores are only used for presentation images currently, and usually the first thing that we do
+        // is write to them, so this particular situation is not expected to come up often.
+        const bool writing = is_write_access(access.access_flags) || access.layout != tmp.layout
+                             || tmp.wait_semaphore;
 
         // --- is an execution barrier necessary for this access?
         if (writing) {
             for (size_t iq = 0; iq < max_queues; ++iq) {
-                // WA* hazard: need queue sync w.r.t. last accesses across ALL queues
-                queue_syncs[iq] = std::max(queue_syncs[iq], tmp.access_sn[iq]);
-                queue_syncs_wait_dst_stages[iq] |= access.input_stage;
+                // WA* hazard: need to sync w.r.t. last accesses across ALL queues
+                if (tmp.access_sn[iq]) {
+                    // resource accessed on queue iq
+                    wait_sn[iq] = std::max(wait_sn[iq], tmp.access_sn[iq]);
+                    if (iq == snn.queue) {
+                        // access on same queue, will use a pipeline barrier
+                        src_stage_mask |= tmp.stages;
+                    }
+                }
+                wait_dst_stages[iq] |= access.input_stage;
             }
         } else {
             // RAW hazard: need queue sync w.r.t last write
-            queue_syncs[tmp.write_snn.queue] =
-                    std::max(queue_syncs[tmp.write_snn.queue], tmp.write_snn.serial);
-            queue_syncs_wait_dst_stages[tmp.write_snn.queue] |= access.input_stage;
+            wait_sn[tmp.write_snn.queue] =
+                    std::max(wait_sn[tmp.write_snn.queue], tmp.write_snn.serial);
+            if (tmp.write_snn.queue == snn.queue) { src_stage_mask |= tmp.stages; }
+            wait_dst_stages[tmp.write_snn.queue] |= access.input_stage;
         }
 
-        src_stage_flags |= tmp.stages;
-        dst_stage_flags |= access.input_stage;
+        // --- is a semaphore wait necessary for this access?
+        if (tmp.wait_semaphore) {
+            // consume the semaphore
+            out_wait_semaphores.push_back(std::exchange(tmp.wait_semaphore, nullptr));
+        }
+
+        dst_stage_mask |= access.input_stage;
 
         // --- is a memory barrier necessary for this access?
         // yes, if layout is different
@@ -1076,60 +1188,58 @@ struct schedule_ctx {
         submitted_task& st = submitted_tasks[sn - base_sn];
         st.snn = snn;
 
-        // --- infer execution & memory dependencies from resource accesses
-        std::array<serial_number, max_queues> queue_syncs{};
-        std::array<vk::PipelineStageFlags, max_queues> queue_syncs_wait_dst_stages{};
-        st.image_memory_barriers_offset = image_memory_barriers.size();
-        st.buffer_memory_barriers_offset = buffer_memory_barriers.size();
+        // --- assign memory for all resources accessed in this task
         for (const auto& access : t.accesses) {
             assign_memory(access.index);
-            memory_dependency(access.index, access.details, snn, queue_syncs,
-                    queue_syncs_wait_dst_stages, st.num_image_memory_barriers,
-                    st.num_buffer_memory_barriers, st.src_stage_mask, st.dst_stage_mask);
+        }
+
+        // --- infer execution & memory dependencies from resource accesses
+        per_queue_wait_serials wait_sn{};
+        per_queue_wait_dst_stages wait_dst_stages{};
+        st.image_memory_barriers_offset = image_memory_barriers.size();
+        st.buffer_memory_barriers_offset = buffer_memory_barriers.size();
+        std::vector<vk::Semaphore> wait_binary_semaphores;
+        for (const auto& access : t.accesses) {
+            memory_dependency(access.index, access.details, snn, wait_sn, wait_dst_stages,
+                    st.num_image_memory_barriers, st.num_buffer_memory_barriers, st.src_stage_mask,
+                    st.dst_stage_mask, wait_binary_semaphores);
         }
 
         if (!st.src_stage_mask) { st.src_stage_mask = vk::PipelineStageFlagBits::eTopOfPipe; }
         if (!st.dst_stage_mask) { st.src_stage_mask = vk::PipelineStageFlagBits::eBottomOfPipe; }
 
-        // --- update liveness sets and create concrete resources
+        // --- update liveness sets
         update_liveness(task_index);
 
         // --- apply queue syncs
-        bool xqsync = false;  // cross queue sync
+        bool sem_wait = false;  // cross queue sync
         for (size_t iq = 0; iq < max_queues; ++iq) {
-            if (queue_syncs[iq]) {
+            if (wait_sn[iq]) {
                 // execution barrier necessary
                 // if the exec barrier is on a different queue, then it's going to be a semaphore wait,
                 // and this ensures that all stages have finished
                 pstate[iq].apply_execution_barrier(
-                        queue_syncs[iq], iq != snn.queue ? vk::PipelineStageFlagBits::eBottomOfPipe
-                                                         : st.src_stage_mask);
-                xqsync |= iq != snn.queue;
+                        wait_sn[iq], iq != snn.queue ? vk::PipelineStageFlagBits::eBottomOfPipe
+                                                     : st.src_stage_mask);
+                sem_wait |= iq != snn.queue;
             }
         }
+        sem_wait |= !wait_binary_semaphores.empty();
 
-        if (xqsync) {
-            for (size_t iq = 0; iq < max_queues; ++iq) {
-                queue_submit& qcbb = pending_submits[iq];
-                if (queue_syncs[iq] && qcbb.cb_count) {
-                    qcbb.cb_offset = next_cb_index;
-                    submits.push_back(qcbb);
-                    next_cb_index += qcbb.cb_count;
-                    qcbb.wait_sn = {};
-                    qcbb.first_sn = 0;
-                    qcbb.cb_count = 0;
-                }
-            }
-            pending_submits[snn.queue].wait_sn = queue_syncs;
-            pending_submits[snn.queue].wait_dst_stages = queue_syncs_wait_dst_stages;
+        if (sem_wait) {
+            // if a semaphore wait is necessary, must start a new batch
+            submission_builder.start_batch(
+                    snn.queue, wait_sn, wait_dst_stages, wait_binary_semaphores);
+        }
+        if (t.type() != task_type::present) {
+            submission_builder.batch_command_buffer(snn);
+        } else {
+            // present task, end the batch
+            submission_builder.end_batch_and_present(snn.queue, {t.detail.present.swapchain},
+                    {t.detail.present.image_index}, dev.create_binary_semaphore());
         }
 
-        if (pending_submits[snn.queue].cb_count == 0) {
-            pending_submits[snn.queue].first_sn = snn.serial;
-        }
-        pending_submits[snn.queue].cb_count++;
-        pending_submits[snn.queue].signal_snn = snn;
-
+        // --- state dump
         fmt::print("====================================================\n"
                    "Task {} SNN {}:{}",
                 t.name, q, sn);
@@ -1137,14 +1247,14 @@ struct schedule_ctx {
         {
             bool begin = true;
             for (size_t iq = 0; iq < max_queues; ++iq) {
-                if (queue_syncs[iq] != 0 && iq != q) {
+                if (wait_sn[iq] != 0 && iq != q) {
                     // cross-queue semaphore wait
                     if (!begin) {
                         fmt::print(",");
                     } else
                         begin = false;
-                    fmt::print("{}:{}->{}", (uint64_t) iq, (uint64_t) queue_syncs[iq],
-                            pipeline_stages_to_string_compact(queue_syncs_wait_dst_stages[iq]));
+                    fmt::print("{}:{}->{}", (uint64_t) iq, (uint64_t) wait_sn[iq],
+                            pipeline_stages_to_string_compact(wait_dst_stages[iq]));
                 }
             }
         }
@@ -1244,23 +1354,11 @@ struct schedule_ctx {
     }
 
     size_t finish_pending_cb_batches() {
-        for (size_t i = 0; i < max_queues; ++i) {
-            if (pending_submits[i].cb_count != 0) {
-                pending_submits[i].cb_offset = next_cb_index;
-                submits.push_back(pending_submits[i]);
-                next_cb_index += pending_submits[i].cb_count;
-            }
-        }
-
-        // reorder tasks by final SNN
-        // from here on, preds and succs are invalid.
-        std::sort(tasks.begin(), tasks.end(), [](const task& a, const task& b) {
-            return a.sn < b.sn;
-        });  // XXX avoid sorting those;
+        const auto num_cb = submission_builder.finish();
 
         fmt::print(
                 "====================================================\nCommand buffer batches:\n");
-        for (auto&& submit : submits) {
+        for (auto&& submit : submission_builder.submits) {
             fmt::print("- W={},{},{},{} WDST={},{},{},{} S={}:{} cb_offset={} ncb={}\n",
                     submit.wait_sn[0], submit.wait_sn[1], submit.wait_sn[2], submit.wait_sn[3],
                     pipeline_stages_to_string_compact(submit.wait_dst_stages[0]),
@@ -1286,7 +1384,7 @@ struct schedule_ctx {
             fmt::print("- {} => {}\n", tasks[i].name, submitted_tasks[i].cb_index);
         }
 
-        return next_cb_index;
+        return num_cb;
     }
 
     bool schedule_next() {
@@ -1367,7 +1465,7 @@ void queue_impl::enqueue_pending_tasks() {
     const auto vk_device = device_.get_vk_device();
 
     // --- short-circuit if no tasks
-    if (batch_.tasks.empty()) { return; }
+    if (tasks_.empty()) { return; }
 
     //---------------------------------------------------
     // main scheduling loop
@@ -1384,8 +1482,7 @@ void queue_impl::enqueue_pending_tasks() {
     // - pacing (wait for batch N-2)
     // - dump states
 
-    schedule_ctx ctx{
-            device_, queue_indices_, batch_.start_serial + 1, batch_.tasks, batch_.temporaries};
+    schedule_ctx ctx{device_, queue_indices_, batch_start_serial_ + 1, tasks_, temporaries_};
     while (ctx.schedule_next()) {}
     size_t cb_count = ctx.finish_pending_cb_batches();
     ctx.allocate_memory();
@@ -1396,34 +1493,31 @@ void queue_impl::enqueue_pending_tasks() {
     // - `cb_count` is the total number of command buffers necessary
     // - `cctx.submitted_tasks[i].cb_index` is the index of the command buffer for task i
 
-    dump_batch(batch_);
-
     {
         std::ofstream out_graphviz{
-                fmt::format("graal_test_{}.dot", batch_.start_serial), std::ios::trunc};
-        dump_tasks(out_graphviz, batch_.tasks, batch_.temporaries, ctx.submitted_tasks);
+                fmt::format("graal_test_{}.dot", batch_start_serial_), std::ios::trunc};
+        dump_tasks(out_graphviz, tasks_, temporaries_, ctx.submitted_tasks);
     }
 
     //---------------------------------------------------
     // fill command buffers
-    std::vector<vk::CommandBuffer> cb;
-    cb.resize(cb_count, nullptr);
+    std::vector<vk::CommandBuffer> command_buffers;
+    command_buffers.resize(cb_count, nullptr);
     batch_thread_resources thread_resources{.cb_pool = get_command_buffer_pool()};
 
     // fill command buffers
-    for (size_t i = 0; i < batch_.tasks.size(); ++i) {
-        auto& t = batch_.tasks[i];
+    for (size_t i = 0; i < tasks_.size(); ++i) {
+        auto& t = tasks_[i];
         auto& st = ctx.submitted_tasks[i];
 
-        const auto command_buffer = thread_resources.cb_pool.fetch_command_buffer(vk_device);
-        cb[st.cb_index] = command_buffer;
+        const auto cb = thread_resources.cb_pool.fetch_command_buffer(vk_device);
+        command_buffers[st.cb_index] = cb;
 
-        command_buffer.begin(vk::CommandBufferBeginInfo{});
+        cb.begin(vk::CommandBufferBeginInfo{});
 
-        // emit the necessary barriers
-
+        // emit the necessary pipeline barriers
         if (st.needs_cmd_pipeline_barrier()) {
-            command_buffer.pipelineBarrier(st.src_stage_mask, st.dst_stage_mask, {}, 0, nullptr,
+            cb.pipelineBarrier(st.src_stage_mask, st.dst_stage_mask, {}, 0, nullptr,
                     st.num_buffer_memory_barriers,
                     ctx.buffer_memory_barriers.data() + st.buffer_memory_barriers_offset,
                     st.num_image_memory_barriers,
@@ -1431,185 +1525,56 @@ void queue_impl::enqueue_pending_tasks() {
         }
 
         if (t.type() == task_type::render_pass) {
-            if (t.detail.render.callback) t.detail.render.callback(nullptr, command_buffer);
+            // TODO render pass
+            if (t.detail.render.callback) t.detail.render.callback(nullptr, cb);
         } else if (t.type() == task_type::compute_pass) {
-            if (t.detail.compute.callback) t.detail.compute.callback(command_buffer);
+            if (t.detail.compute.callback) t.detail.compute.callback(cb);
         }
 
-        command_buffer.end();
+        cb.end();
     }
 
     //---------------------------------------------------
     // queue submission
-    for (const auto& b : ctx.submits) {
-        const auto signal_semaphore_value = b.signal_snn.serial;
-        const vk::TimelineSemaphoreSubmitInfo timeline_submit_info{
-                .waitSemaphoreValueCount = (uint32_t) b.wait_sn.size(),
-                .pWaitSemaphoreValues = b.wait_sn.data(),
-                .signalSemaphoreValueCount = 1,
-                .pSignalSemaphoreValues = &signal_semaphore_value};
-
-        vk::SubmitInfo submit_info{
-                .pNext = &timeline_submit_info,
-                .waitSemaphoreCount = (uint32_t) b.wait_sn.size(),
-                .pWaitSemaphores = timelines_,
-                .pWaitDstStageMask = b.wait_dst_stages.data(),
-                .commandBufferCount = (uint32_t) b.cb_count,
-                .pCommandBuffers = cb.data() + b.cb_offset,
-                .signalSemaphoreCount = 1,
-                .pSignalSemaphores = &timelines_[b.signal_snn.queue],
-        };
-
-        if (auto result = device_.get_queue_by_index(b.signal_snn.queue)
-                                  .submit(1, &submit_info, nullptr);
-                result != vk::Result::eSuccess) {
-            fmt::print("vkQueueSubmit failed: {}\n", result);
-        }
+    for (auto& b : ctx.submission_builder.submits) {
+        b.submit(device_.get_queue_by_index(b.signal_snn.queue), command_buffers, timelines_);
     }
 
-    // --- external synchronization ---
+    std::vector<resource_ptr> batch_resources;
+    batch_resources.reserve(temporaries_.size());
+    for (auto tmp : temporaries_) {
+        // store last know state of the resource objects
+        tmp.resource->last_access = tmp.access_sn;
+        tmp.resource->last_access_flags = tmp.access_flags;
+        tmp.resource->last_pipeline_stages = tmp.stages;
+        tmp.resource->last_write = tmp.write_snn;
+        batch_resources.push_back(std::move(tmp.resource));
+    }
 
-    /*// --- 3. set up external synchronization for resources that are could be accessed in the next batch
-    // This can affect the creation of the submission batches (next step).
-    for (size_t i = 0; i < n_tmp; ++i) {
-        auto& tmp = *batch_.temporaries[i].resource;
-
-        if (writes_are_user_observable(tmp)) {
-            fmt::print("Writes to {} are observable by the user.\n", get_object_name(i, tmp));
-            // writes to this resource in the batch can be observed by user code afterwards
-            auto producer = get_unsubmitted_task(tmp.last_write_serial);
-            fmt::print("\t producer task {} (SN{}).\n",
-                    get_task_name(tmp.last_write_serial, *producer), tmp.last_write_serial);
-
-            if (tmp.type() == resource_type::swapchain_image) {
-                // Special case: user observable swapchain images are synchronized with binary semaphores because presentation does not support timelines
-                auto semaphore = device_->create_binary_semaphore();
-                producer->signal_binary.push_back(semaphore);
-                auto prev_semaphore = std::exchange(tmp.wait_semaphore, semaphore);
-                // FIXME not sure what we know about the previous semaphore here (there shouldn't be one)
-                if (prev_semaphore) { device_->recycle_binary_semaphore(prev_semaphore); }
-            } else {
-                // use timeline
-                producer->signal.enabled = true;
-            }
-        }
-    }*/
-
-    // two tasks are in different submissions if:
-    // - they are not scheduled into the same queue
-    // - they cannot be merged into a single vkQueueSubmit
-    // - one of the tasks is a submission and the other is a present operation
-
-    // --- 3. submit tasks
-    // --- 3.1 get command pool/allocate command buffers
-
-    // TODO parallel submission
-
-    batch_.threads.push_back(std::move(thread_resources));
-
-    // stash the current batch
-    in_flight_batches_.push_back(std::move(batch_));
     // start new batch
-    batch_.start_serial = last_serial_;
-    batch_.semaphores.clear();
-    batch_.temporaries.clear();
-    batch_.threads.clear();
-    batch_.tasks.clear();
+    batch_start_serial_ = last_serial_;
+    temporaries_.clear();
+    tasks_.clear();
     tmp_indices.clear();
 }
 
-void queue_impl::present(swapchain_image&& image) {
-    /*enqueue_pending_tasks();
-
-    auto impl = std::move(image.impl_);
-    const auto present_queue =
-            device_->get_graphics_queue();  // FIXME we assume that the present queue is also the main graphics queue
-
-    // TODO we must submit a command buffer transition the image layout to PRESENT_SRC
-    // if it is not in that layout already.
-    // Ideally this should be done in the previous batch, but unfortunately
-    // if the previous batch is already submitted there's no way to predict in what state
-    // the swapchain image is.
-
-    if (impl->last_layout != vk::ImageLayout::ePresentSrcKHR) {
-        // need transfer
-        const auto vk_device = device_->get_vk_device();
-        auto prev_batch = in_flight_batches_.back();  // last submitted batch
-        auto cb = prev_batch.threads[0].cb_pool.fetch_command_buffer(device_->get_vk_device());
-
-        // semaphore that is going to be signalled when the layout transition is done
-        // TODO who owns it? (i.e. when do can we reclaim it?)
-        vk::Semaphore transition_finished_semaphore = device_->create_binary_semaphore();
-
-        // build command buffer with layout transition
-        cb.begin(vk::CommandBufferBeginInfo{});
-        vk::ImageMemoryBarrier transition_barrier{
-                .oldLayout = impl->last_layout,
-                .newLayout = vk::ImageLayout::ePresentSrcKHR,
-                .image = impl->get_vk_image(),
-        };
-        cb.pipelineBarrier(
-            vk::PipelineStageFlags{},   // FIXME this cannot be zero, we must track what is the last access (XXX do we still have to put a barrier if there's a semaphore sync?) 
-            vk::PipelineStageFlagBits::eBottomOfPipe,       // FIXME understand why 
-            vk::DependencyFlags{}, 0, nullptr, 0, nullptr, 1, &transition_barrier);
-        cb.end();
-
-        // extract the semaphore that we must wait for, if there's one.
-        // if there's none, then wait on the timeline for the last write serial.
-        // at the same time, replace it with the semaphore that is going to be signalled when the transition is complete.
-        auto semaphore = std::exchange(impl->wait_semaphore, transition_finished_semaphore);
-
-        if (semaphore) {
-            // waiting on binary semaphore
-            // (this should only happen when the swapchain image is presented without having ever been accessed before, which is not very useful).
-            // TODO implement
-            throw std::logic_error{"unimplemented"};
-        } else {
-            const task* producer = get_submitted_task(impl->last_write_serial);
-            if (producer) {
-                // waiting on timeline
-                const auto queue = producer->signal.queue;
-                const auto timeline = timelines_[queue];
-                const serial_number wait_value = impl->last_write_serial;
-                const vk::TimelineSemaphoreSubmitInfo timeline_submit_info{
-                        .waitSemaphoreValueCount = 1, .pWaitSemaphoreValues = &wait_value};
-                const vk::PipelineStageFlags wait_dst_stage_mask =
-                        vk::PipelineStageFlagBits::eAllCommands;  // TODO maybe less?
-
-                const vk::SubmitInfo submit_info = {.pNext = &timeline_submit_info,
-                        .waitSemaphoreCount = 1,
-                        .pWaitSemaphores = &timeline,
-                        .pWaitDstStageMask = &wait_dst_stage_mask,
-                        .commandBufferCount = 1,
-                        .pCommandBuffers = &cb,
-                        .signalSemaphoreCount = 1,
-                        .pSignalSemaphores = &transition_finished_semaphore};
-                present_queue.submit(1, &submit_info, nullptr);
-            } else {
-                // no wait, only signal
-                const vk::SubmitInfo submit_info = {.commandBufferCount = 1,
-                        .pCommandBuffers = &cb,
-                        .signalSemaphoreCount = 1,
-                        .pSignalSemaphores = &transition_finished_semaphore};
-                present_queue.submit(1, &submit_info, nullptr);
-            }
-        }
-    }
-
-    // there should be a semaphore set on the resource, consume it
-    auto semaphore = std::exchange(impl->wait_semaphore, nullptr);
-    const vk::SwapchainKHR swapchain = impl->get_vk_swapchain();
-    const uint32_t index = impl->index();
-    vk::PresentInfoKHR present_info{
-            .waitSemaphoreCount = 1,
-            .pWaitSemaphores = &semaphore,
-            .swapchainCount = 1,
-            .pSwapchains = &swapchain,
-            .pImageIndices = &index,
-            .pResults = {},
-    };
-
-    present_queue.presentKHR(present_info);*/
+void queue_impl::present(swapchain swapchain) {
+    auto& t = init_task(
+            tasks_.emplace_back(swapchain.vk_swapchain(), swapchain.current_image_index()),
+            "present");
+    // XXX the memory barrier should not be necessary here? according to the spec:
+    // "Any writes to memory backing the images referenced by the pImageIndices
+    // and pSwapchains members of pPresentInfo, that are available before vkQueuePresentKHR is executed,
+    // are automatically made visible to the read access performed by the presentation engine.
+    // This automatic visibility operation for an image happens-after the semaphore signal operation,
+    // and happens-before the presentation engine accesses the image."
+    add_resource_dependency(t, swapchain.impl_,
+            resource_access_details{
+                    .layout = vk::ImageLayout::ePresentSrcKHR,
+                    .access_flags = vk::AccessFlagBits::eMemoryRead,
+                    .input_stage = vk::PipelineStageFlagBits::eAllCommands,
+                    .binary_semaphore = true,
+            });
 }
 
 void queue_impl::wait_for_task(uint64_t sequence_number) {
@@ -1643,26 +1608,24 @@ void queue_impl::wait_for_task(uint64_t sequence_number) {
 /// @param after Sequence number of the task to execute after. Must correspond to an unsubmitted task.
 /// @param use_binary_semaphore whether to synchronize using a binary semaphore.
 /// before < after; if use_binary_semaphore == true, then before must also correspond to an unsubmitted task.
-void queue_impl::add_task_dependency(task& t, serial_number before, bool use_binary_semaphore) {
-    assert(t.sn > before);
+void queue_impl::add_task_dependency(task& t, submission_number before, bool use_binary_semaphore) {
+    assert(t.sn > before.serial);
 
-    if (before <= completed_serial_) {
+    /*if (before <= completed_serial_) {
         // no sync needed, task has already completed
         return;
-    }
+    }*/
 
-    if (before <= batch_.start_serial) {
+    if (before.serial <= batch_start_serial_) {
         // --- Inter-batch synchronization w/ timeline
-        auto before_task = get_submitted_task(before);
-        size_t q = before_task->signal.queue;
-        t.waits[q] = std::max(t.waits[q], before);
+        t.waits[before.queue] = std::max(t.waits[before.queue], before.serial);
     } else {
         // --- Intra-batch synchronization
         const auto local_task_index =
-                before - batch_.start_serial - 1;  // SN relative to start of batch
-        auto& before_task = batch_.tasks[local_task_index];
+                before.serial - batch_start_serial_ - 1;  // SN relative to start of batch
+        auto& before_task = tasks_[local_task_index];
         t.preds.push_back(local_task_index);
-        before_task.succs.push_back(t.sn - batch_.start_serial - 1);
+        before_task.succs.push_back(t.sn - batch_start_serial_ - 1);
     }
 }
 
@@ -1672,14 +1635,14 @@ void queue_impl::add_task_dependency(task& t, serial_number before, bool use_bin
 void queue_impl::add_resource_dependency(
         task& t, resource_ptr resource, const resource_access_details& access) {
     const auto tmp_index = get_resource_tmp_index(resource);
-    auto& tmp = batch_.temporaries[tmp_index];
+    auto& tmp = temporaries_[tmp_index];
 
     // does the resource carry a semaphore? if so, extract it and sync on that
     if (auto semaphore = std::exchange(resource->wait_semaphore, nullptr)) {
         t.wait_binary.push_back(semaphore);
     } else {
         // the resource does not carry a semaphore, sync on timeline
-        add_task_dependency(t, tmp.write_snn.serial, false);
+        add_task_dependency(t, tmp.write_snn, false);
     }
 
     //const bool reading = is_read_access(access.access_flags);
@@ -1699,7 +1662,7 @@ void queue_impl::add_resource_dependency(
 //-----------------------------------------------------------------------------
 
 // Called by buffer accessors to register an use of a buffer in a task
-void handler::add_buffer_access(std::shared_ptr<detail::buffer_impl> buffer,
+void handler::add_buffer_access(std::shared_ptr<detail::buffer_resource> buffer,
         vk::AccessFlags access_flags, vk::PipelineStageFlags input_stage,
         vk::PipelineStageFlags output_stage) const {
     detail::resource_access_details details;
@@ -1711,7 +1674,7 @@ void handler::add_buffer_access(std::shared_ptr<detail::buffer_impl> buffer,
 }
 
 // Called by image accessors to register an use of an image in a task
-void handler::add_image_access(std::shared_ptr<detail::image_impl> image,
+void handler::add_image_access(std::shared_ptr<detail::image_resource> image,
         vk::AccessFlags access_flags, vk::PipelineStageFlags input_stage,
         vk::PipelineStageFlags output_stage, vk::ImageLayout layout) const {
     detail::resource_access_details details;
@@ -1720,18 +1683,6 @@ void handler::add_image_access(std::shared_ptr<detail::image_impl> image,
     details.input_stage |= input_stage;
     details.output_stage |= output_stage;
     queue_.add_resource_dependency(task_, image, details);
-}
-
-// Called by image accessors to register an use of an image in a task
-void handler::add_image_access(std::shared_ptr<detail::swapchain_image_impl> swapchain_image,
-        vk::AccessFlags access_flags, vk::PipelineStageFlags input_stage,
-        vk::PipelineStageFlags output_stage, vk::ImageLayout layout) const {
-    detail::resource_access_details details;
-    details.layout = layout;
-    details.access_flags = access_flags;
-    details.input_stage |= input_stage;
-    details.output_stage |= output_stage;
-    queue_.add_resource_dependency(task_, swapchain_image, details);
 }
 
 //-----------------------------------------------------------------------------
@@ -1743,8 +1694,8 @@ void queue::enqueue_pending_tasks() {
     impl_->enqueue_pending_tasks();
 }
 
-void queue::present(swapchain_image&& image) {
-    impl_->present(std::move(image));
+void queue::present(swapchain swapchain) {
+    impl_->present(std::move(swapchain));
 }
 
 detail::task& queue::create_render_pass_task(

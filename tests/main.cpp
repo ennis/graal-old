@@ -385,7 +385,7 @@ inline constexpr image_usage default_image_usage =
             vk::ImageLayout::eColorAttachmentOptimal);
 
 #define DRAW_SWAPCHAIN(img)                                                                      \
-    h.add_image_access(img, vk::AccessFlagBits::eColorAttachmentWrite, vk::PipelineStageFlags{}, \
+    h.add_swapchain_access(img, vk::AccessFlagBits::eColorAttachmentWrite, vk::PipelineStageFlags{}, \
             vk::PipelineStageFlagBits::eColorAttachmentOutput,                                   \
             vk::ImageLayout::eColorAttachmentOptimal);
 
@@ -570,24 +570,18 @@ int main() {
                     {static_cast<size_t>(display_w), static_cast<size_t>(display_h)}, surface);
         }
 
-        // problem: it should be an image<>, but not managed by the queue
-        // -> don't make it an image<>, use special type swapchain_image
-        // -> swapchain_images can be accessed with accessors
-        // ->
-        auto next_image = swapchain.acquire_next_image();
-
         {
             attachment color[] = {
-                    attachment{next_image, attachment_load_op::clear, attachment_store_op::store}};
+                    attachment{swapchain, attachment_load_op::clear, attachment_store_op::store}};
             render_pass_desc pass_desc{
                     .color_attachments = color,
             };
 
-            q.render_pass(pass_desc, [&](handler& h) { DRAW_SWAPCHAIN(next_image)
+            q.render_pass(pass_desc, [&](handler& h) { DRAW_SWAPCHAIN(swapchain)
                 return [](vk::RenderPass,vk::CommandBuffer) {}; });
         }
 
-        q.present(std::move(next_image));
+        q.present(swapchain);
         q.enqueue_pending_tasks();
 
         glfwSwapBuffers(window);

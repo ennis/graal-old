@@ -10,10 +10,9 @@
 namespace graal::detail {
 
 class swapchain_impl;
-class swapchain_image_impl;
 
 //-----------------------------------------------------------------------------
-class swapchain_impl {
+class swapchain_impl : public image_resource {
     friend class queue_impl;
 
 public:
@@ -23,7 +22,15 @@ public:
 
     void resize(range_2d framebuffer_size, vk::SurfaceKHR surface);
 
-    [[nodiscard]] vk::SwapchainKHR get_vk_swapchain() const noexcept {
+    [[nodiscard]] uint32_t current_image_index() const noexcept {
+        return current_image_;
+    }
+
+    [[nodiscard]] vk::Image current_image() const noexcept {
+        return images_[current_image_];
+    }
+
+    [[nodiscard]] vk::SwapchainKHR vk_swapchain() const noexcept {
         return swapchain_;
     }
 
@@ -31,43 +38,14 @@ public:
         return format_;
     }
 
-    [[nodiscard]] static std::shared_ptr<swapchain_image_impl> acquire_next_image(
-            std::shared_ptr<swapchain_impl> impl);
-
 private:
+    void acquire_next_image();
+
     device device_;
     vk::SwapchainKHR swapchain_;
     image_format format_;
+    uint32_t current_image_ = 0;
     std::vector<vk::Image> images_;
-};
-
-//-----------------------------------------------------------------------------
-class swapchain_image_impl : public image_resource {
-    friend class swapchain_impl;
-
-public:
-    swapchain_image_impl(
-            std::shared_ptr<detail::swapchain_impl> swapchain, vk::Image image, uint32_t index) :
-        image_resource{resource_type::swapchain_image, image, swapchain->format()},
-        swapchain_{std::move(swapchain)}, index_{index} 
-    {
-    }
-
-    [[nodiscard]] uint32_t index() const noexcept {
-        return index_;
-    }
-
-    [[nodiscard]] vk::Image get_vk_image() const noexcept {
-        return image_;
-    }
-
-    [[nodiscard]] vk::SwapchainKHR get_vk_swapchain() const noexcept {
-        return swapchain_->get_vk_swapchain();
-    }
-
-private:
-    std::shared_ptr<detail::swapchain_impl> swapchain_;
-    uint32_t index_;
 };
 
 }  // namespace graal::detail

@@ -1,5 +1,6 @@
 #pragma once
 #include <graal/detail/sequence_number.hpp>
+#include <graal/bitmask.hpp>
 
 #include <vulkan/vulkan.hpp>
 
@@ -206,26 +207,44 @@ struct pipeline_stage_tracker {
     }
 };
 
-enum class region_type {
-    buffer,
-    image
+enum class resource_state {
+    indirect_command_read = (1<<0),
+    vertex_buffer = (1 << 1),
+    index_buffer = (1 << 2),
+    color_attachment = (1 << 3),
+    depth_attachment = (1 << 4),
+    transfer_src = (1 << 5),
+    transfer_dst = (1 << 6),
+    shader_read = (1 << 7),
+    shader_write = (1 << 8),
 };
 
-struct region {
-    region_type type;
-    union {
-        struct {
-            vk::Buffer buffer;
-            vk::DeviceSize offset;
-            vk::DeviceSize size;
-        } buffer;
-        struct {
-            vk::Image image;
-            vk::ImageSubresourceRange subresource_range;
-        } image;
-    } u;
-};
+GRAAL_BITMASK(resource_state)
 
+/*constexpr inline void get_resource_state_barriers(
+    resource_state state,
+    vk::AccessFlags access_mask,
+    vk::PipelineStageFlags input_stage_mask,
+    vk::PipelineStageFlags output_stage_mask)
+{
+    if (bitmask_includes(state, resource_state::vertex_buffer)) {
+        access_mask |= vk::AccessFlagBits::eVertexAttributeRead;
+        input_stage_mask |= vk::PipelineStageFlagBits::eVertexInput;
+        output_stage_mask |= vk::PipelineStageFlagBits::eVertexInput;
+    }
+
+    if (bitmask_includes(state, resource_state::index_buffer)) {
+        access_mask |= vk::AccessFlagBits::eIndexRead;
+        input_stage_mask |= vk::PipelineStageFlagBits::eVertexInput;
+        output_stage_mask |= vk::PipelineStageFlagBits::eVertexInput;
+    }
+
+    if (bitmask_includes(state, resource_state::color_attachment)) {
+        access_mask |= vk::AccessFlagBits::eColorAttachmentWrite;
+    }
+}*/
+
+/*
 struct region_state {
     vk::ImageLayout layout = vk::ImageLayout::eUndefined;
     std::array<serial_number, max_queues> access_sn;
@@ -242,6 +261,6 @@ class region_state_map {
 public:
 private:
     std::unordered_map<region, region_state> map;
-};
+};*/
 
 }  // namespace graal::detail

@@ -68,8 +68,9 @@ vk::Extent2D get_preferred_swap_extent(
 
 //-----------------------------------------------------------------------------
 swapchain_impl::swapchain_impl(device& device, range_2d framebuffer_size, vk::SurfaceKHR surface) :
-    device_{device} 
-{
+    image_resource{
+            resource_type::swapchain_image, nullptr, image_format::undefined},  // dummy format
+    device_{device} {
     resize(framebuffer_size, surface);
 }
 
@@ -120,6 +121,7 @@ void swapchain_impl::resize(range_2d framebuffer_size, vk::SurfaceKHR surface) {
     const auto new_swapchain = vk_device.createSwapchainKHR(create_info);
 
     if (swapchain_) {
+        // FIXME what if the images are in use?
         vk_device.destroySwapchainKHR(swapchain_);
         images_.clear();
     }
@@ -127,26 +129,24 @@ void swapchain_impl::resize(range_2d framebuffer_size, vk::SurfaceKHR surface) {
     swapchain_ = new_swapchain;
     images_ = vk_device.getSwapchainImagesKHR(swapchain_);
     format_ = static_cast<image_format>(static_cast<int>(swap_format.format));
+    acquire_next_image();
 }
 
-std::shared_ptr<swapchain_image_impl> swapchain_impl::acquire_next_image(
-        std::shared_ptr<swapchain_impl> swapchain) {
-    auto vk_device = swapchain->device_.get_vk_device();
+void swapchain_impl::acquire_next_image() {
+    auto vk_device = device_.get_vk_device();
 
-    auto image_available = swapchain->device_.create_binary_semaphore();
-    auto [result, image_index] = vk_device.acquireNextImageKHR(
-            swapchain->swapchain_, 1000000000, image_available, nullptr);
+    auto image_available = device_.create_binary_semaphore();
+    auto [result, image_index] =
+            vk_device.acquireNextImageKHR(swapchain_, 1000000000, image_available, nullptr);
     if (result == vk::Result::eTimeout) {
         throw std::runtime_error{"timeout waiting for next swapchain image"};
     }
 
-    // TODO we don't need to allocate a new swapchain_image_impl every time, we
-    // could just create an aliased shared_ptr to a swapchain_image_impl stored
-    // within swapchain_impl
-    auto img = std::make_shared<swapchain_image_impl>(
-            std::move(swapchain), swapchain->images_[image_index], image_index);
-    img->wait_semaphore = image_available;
-    return img;
+    image_ = images_[image_index];
+    if (auto old_semaphore = std::exchange(wait_semaphore, image_available)) {
+        // FIXME is that correct? what if the semaphore is signalled?
+        device_.recycle_binary_semaphore(old_semaphore);
+    }
 }
 
 }  // namespace graal::detail

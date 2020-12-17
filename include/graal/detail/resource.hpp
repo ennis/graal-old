@@ -105,10 +105,9 @@ public:
     // -> a temporary can be a part of a resource
     // -> but temporaries can overlap. arghhhh!
 
-
+    // TODO extract those variables into a struct
     vk::ImageLayout last_layout =
             vk::ImageLayout::eUndefined;  // last known image layout, ignored for buffers
-    
     vk::AccessFlags last_access_flags = {};
     vk::PipelineStageFlags last_pipeline_stages;
     vk::Semaphore wait_semaphore =
