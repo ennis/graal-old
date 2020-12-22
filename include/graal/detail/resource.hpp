@@ -39,26 +39,33 @@ class image_resource;
 class buffer_resource;
 class virtual_resource;
 
+struct resource_last_access_info {
+    std::array<serial_number, max_queues> access_sn{};
+    submission_number write_snn;
+    vk::ImageLayout layout = vk::ImageLayout::eUndefined;
+    vk::Semaphore wait_semaphore;
+    vk::AccessFlags access_mask{};
+    vk::PipelineStageFlags stages{};
+};
+
 /// @brief Base class for tracked resources.
 class resource : public named_object {
     friend class queue_impl;
 
 public:
-    resource(resource_type type) : type_{type} {
-        std::fill(last_access.begin(), last_access.end(), 0);
-    }
+    resource(resource_type type) : type_{type} {}
 
     /// @brief If the resource is an image, returns the corresponding VkImage object.
     /// @param device The device used to create the VkImage object, if it was not created yet.
     /// @return nullptr if the resource is not an image.
-    image_resource& as_image();
-    const image_resource& as_image() const;
+    image_resource* as_image();
+    const image_resource* as_image() const;
 
     /// @brief If the resource is an image, returns the corresponding VkImage object.
     /// @param device The device used to create the VkImage object, if it was not created yet.
     /// @return nullptr if the resource is not an image.
-    buffer_resource& as_buffer();
-    const buffer_resource& as_buffer() const;
+    buffer_resource* as_buffer();
+    const buffer_resource* as_buffer() const;
 
     virtual_resource& as_virtual_resource();
 
@@ -88,32 +95,7 @@ public:
     }
 
     bool allocated = false;  // set to true once bind_memory has been called successfully
-    submission_number last_write;  // submission number of the last write
-    std::array<serial_number, max_queues>
-            last_access;  // serial numbers of the last read accesses for each queue
-
-    // Issues:
-    // - layouts can be different between subresources
-    // - current pipeline stages can be different between two disjoint parts of a resource
-    // - same for memory accesses...
-
-    // => fine-grained access tracking?
-    // - would need to store a list of "access regions" and split/merge them as needed: a nightmare.
-    //
-    // Maybe "resource" is the wrong abstraction?
-    // -> temporaries != resource
-    // -> a temporary can be a part of a resource
-    // -> but temporaries can overlap. arghhhh!
-
-    // TODO extract those variables into a struct
-    vk::ImageLayout last_layout =
-            vk::ImageLayout::eUndefined;  // last known image layout, ignored for buffers
-    vk::AccessFlags last_access_flags = {};
-    vk::PipelineStageFlags last_pipeline_stages;
-    vk::Semaphore wait_semaphore =
-            nullptr;  // semaphore to synchronize on before using the resource (updated as the resource is used in a queue)
-    // TODO use a unique_handle pattern to signal ownership. Not the one provided by vulkan-hpp though because
-    // it bundles pointers to the device and allocation infos to allow ad-hoc deletion.
+    resource_last_access_info last_state;
 private:
     // For each resource, we maintain an "user reference count" which represents the number of
     // user-facing objects (image<>, buffer<>, etc.) referencing the resource. This is used

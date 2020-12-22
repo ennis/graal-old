@@ -5,14 +5,18 @@
 
 namespace graal::detail {
 
-image_resource& resource::as_image() {
-    assert(type_ == resource_type::image || type_ == resource_type::swapchain_image);
-    return static_cast<image_resource&>(*this);
+image_resource* resource::as_image() {
+    if (!(type_ == resource_type::image || type_ == resource_type::swapchain_image)) {
+        return nullptr;
+    }
+    return static_cast<image_resource*>(this);
 }
 
-buffer_resource& resource::as_buffer() {
-    assert(type_ == resource_type::buffer);
-    return static_cast<buffer_resource&>(*this);
+buffer_resource* resource::as_buffer() {
+    if (type_ != resource_type::buffer) {
+        return nullptr;
+    }
+    return static_cast<buffer_resource*>(this);
 }
 
 virtual_resource& resource::as_virtual_resource() {

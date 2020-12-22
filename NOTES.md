@@ -1006,9 +1006,34 @@ Cons:
 - no pimpl (but that's already the case)
 - no direct constructors (must use a factory function to create the pointer)
 
+
 Why does SYCL have wrappers?
 - is it for pImpl?
 
+
+# Formalize the submission problem
+- Inputs: DAG of tasks that reference resources
+- Outputs:
+	- command buffer batches
+		- barriers
+		- synchronization
+		- binary semaphores
+	- final resource states
+
+
+# Queue simplification
+- determine barriers "on the fly" (incrementally, as the graph is built)
+	- no need to store accesses in the task (directly update the half-barrier instead)
+- do not reorder passes?
+- usage flag deduction?
+	- error prone with the current design, as the usage flags is "fixed" on resource creation (during first batch submission)
+	  but the image can then be used after the batch is submitted
+	  	- no real transients: all resources can be extended to live after the current batch
+	  		- introduce real transients?
+	  		- lifetime is unclear
+- problem: build barriers after DAG building
+	- need to "replay" the DAG (barriers need tracking of the current readers and writers) or store a vector of readers and writers per access
+	- 
 
 ## Log
 28/11 : pipeline state tracking and "queue classes". Can deduce execution and memory dependencies.

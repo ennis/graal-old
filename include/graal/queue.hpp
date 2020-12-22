@@ -43,23 +43,23 @@ class handler {
 public:
     // Called by buffer accessors to register an use of a buffer in a task
     template<typename T>
-    void add_buffer_access(buffer<T>& buffer, vk::AccessFlags access_flags,
+    void add_buffer_access(buffer<T>& buffer, vk::AccessFlags access_mask,
             vk::PipelineStageFlags input_stage, vk::PipelineStageFlags output_stage) const {
-        add_buffer_access(static_cast<std::shared_ptr<detail::buffer_impl>>(buffer.impl_), access_flags, input_stage, output_stage);
+        add_buffer_access(static_cast<std::shared_ptr<detail::buffer_impl>>(buffer.impl_), access_mask, input_stage, output_stage);
     }
 
     // Called by image accessors to register an use of an image in a task
     template<image_type Type>
-    void add_image_access(image<Type> image, vk::AccessFlags access_flags,
+    void add_image_access(image<Type> image, vk::AccessFlags access_mask,
             vk::PipelineStageFlags input_stage, vk::PipelineStageFlags output_stage,
             vk::ImageLayout layout) const {
-        add_image_access(static_cast<std::shared_ptr<detail::image_impl>>(image.impl_), access_flags, input_stage, output_stage, layout);
+        add_image_access(static_cast<std::shared_ptr<detail::image_impl>>(image.impl_), access_mask, input_stage, output_stage, layout);
     }
 
-    void add_swapchain_access(swapchain swapchain, vk::AccessFlags access_flags,
+    void add_swapchain_access(swapchain swapchain, vk::AccessFlags access_mask,
             vk::PipelineStageFlags input_stage, vk::PipelineStageFlags output_stage,
             vk::ImageLayout layout) const {
-        add_image_access(swapchain.impl_, access_flags, input_stage, output_stage, layout);
+        add_image_access(swapchain.impl_, access_mask, input_stage, output_stage, layout);
     }
 
 private:
@@ -68,11 +68,11 @@ private:
 
     // Called by buffer accessors to register an use of a buffer in a task
     void add_buffer_access(std::shared_ptr<detail::buffer_resource> buffer,
-            vk::AccessFlags access_flags, vk::PipelineStageFlags input_stage,
+            vk::AccessFlags access_mask, vk::PipelineStageFlags input_stage,
             vk::PipelineStageFlags output_stage) const;
 
     // Called by image accessors to register an use of an image in a task
-    void add_image_access(std::shared_ptr<detail::image_resource> image, vk::AccessFlags access_flags,
+    void add_image_access(std::shared_ptr<detail::image_resource> image, vk::AccessFlags access_mask,
             vk::PipelineStageFlags input_stage, vk::PipelineStageFlags output_stage,
             vk::ImageLayout layout) const;
 

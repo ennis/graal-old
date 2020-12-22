@@ -27,7 +27,7 @@ struct resource_access_details {
     /// @brief The layout into which the image must be before beginning the task.
     vk::ImageLayout layout;  
     /// @brief How the task is going to access the resource.
-    vk::AccessFlags access_flags;
+    vk::AccessFlags access_mask;
     vk::PipelineStageFlags input_stage;
     vk::PipelineStageFlags output_stage;
     /// @brief Whether sync needs a binary semaphore
@@ -100,11 +100,9 @@ struct task {
     task(task&& t) : 
         name{ std::move(t.name) }, 
         type_{ t.type_ },
-        sn{ t.sn },
+        snn{ t.snn },
         preds{std::move(t.preds)},
         succs{std::move(t.succs)},
-        wait_binary{ std::move(t.wait_binary) },
-        signal_binary{ std::move(t.signal_binary) },
         accesses{ std::move(t.accesses) }
     {
         switch (t.type_) {
@@ -125,11 +123,9 @@ struct task {
 
         name = std::move(t.name);
         type_ = std::move(t.type_);
-        sn = std::move(t.sn);
+        snn = std::move(t.snn);
         preds = std::move(t.preds);
         succs = std::move(t.succs);
-        wait_binary = std::move(t.wait_binary);
-        signal_binary = std::move(t.signal_binary);
         accesses = std::move(t.accesses);
 
         switch (t.type_) {
@@ -174,6 +170,7 @@ struct task {
 
     struct resource_access {
         size_t index;
+        std::vector<submission_number> preds;
         resource_access_details details;
     };
 
@@ -182,7 +179,7 @@ struct task {
     /// @brief The submission number (SNN).
     /// NOTE a first serial is assigned when the task is created, without a queue, for the purposes of 
     /// DAG building. However, the serial might change after submission, due to task reordering.
-    serial_number sn;
+    submission_number snn;
 
     std::vector<uint64_t> preds;
     std::vector<uint64_t> succs;
@@ -195,8 +192,7 @@ struct task {
         uint64_t serial : 61 = 0;  // task sequence number
     } signal;
 
-    std::vector<vk::Semaphore> wait_binary;  // TODO unique_handle
-    std::vector<vk::Semaphore> signal_binary;
+    bool async;
     std::vector<resource_access> accesses;
 
     union U {

@@ -370,23 +370,26 @@ inline constexpr image_usage default_image_usage =
     h.add_image_access(img, vk::AccessFlagBits::eShaderRead, \
             vk::PipelineStageFlagBits::eComputeShader, {}, vk::ImageLayout::eGeneral);
 
-#define COMPUTE_WRITE(img)                                        \
-    h.add_image_access(img, vk::AccessFlagBits::eShaderWrite, {}, \
-            vk::PipelineStageFlagBits::eComputeShader, vk::ImageLayout::eGeneral);
+#define COMPUTE_WRITE(img)                                                                        \
+    h.add_image_access(img, vk::AccessFlagBits::eShaderWrite,                                     \
+            vk::PipelineStageFlagBits::eComputeShader, vk::PipelineStageFlagBits::eComputeShader, \
+            vk::ImageLayout::eGeneral);
 
 #define SAMPLE(img)                                                                                \
     h.add_image_access(img, vk::AccessFlagBits::eShaderRead,                                       \
             vk::PipelineStageFlagBits::eVertexShader | vk::PipelineStageFlagBits::eFragmentShader, \
             {}, vk::ImageLayout::eShaderReadOnlyOptimal);
 
-#define DRAW(img)                                                          \
-    h.add_image_access(img, vk::AccessFlagBits::eColorAttachmentWrite, {}, \
-            vk::PipelineStageFlagBits::eColorAttachmentOutput,             \
+#define DRAW(img)                                                      \
+    h.add_image_access(img, vk::AccessFlagBits::eColorAttachmentWrite, \
+            vk::PipelineStageFlagBits::eColorAttachmentOutput,         \
+            vk::PipelineStageFlagBits::eColorAttachmentOutput,         \
             vk::ImageLayout::eColorAttachmentOptimal);
 
-#define DRAW_SWAPCHAIN(img)                                                                      \
-    h.add_swapchain_access(img, vk::AccessFlagBits::eColorAttachmentWrite, vk::PipelineStageFlags{}, \
-            vk::PipelineStageFlagBits::eColorAttachmentOutput,                                   \
+#define DRAW_SWAPCHAIN(img)                                                \
+    h.add_swapchain_access(img, vk::AccessFlagBits::eColorAttachmentWrite, \
+            vk::PipelineStageFlagBits::eColorAttachmentOutput,             \
+            vk::PipelineStageFlagBits::eColorAttachmentOutput,             \
             vk::ImageLayout::eColorAttachmentOptimal);
 
 void test_shader(device& device);
@@ -577,8 +580,10 @@ int main() {
                     .color_attachments = color,
             };
 
-            q.render_pass(pass_desc, [&](handler& h) { DRAW_SWAPCHAIN(swapchain)
-                return [](vk::RenderPass,vk::CommandBuffer) {}; });
+            q.render_pass(pass_desc, [&](handler& h) {
+                DRAW_SWAPCHAIN(swapchain)
+                return [](vk::RenderPass, vk::CommandBuffer) {};
+            });
         }
 
         q.present(swapchain);
@@ -622,8 +627,10 @@ void test_case_1(graal::queue& q) {
                 .color_attachments = color,
         };
 
-        q.render_pass("T0", pass_desc,
-                [&](handler& h) { return [](vk::RenderPass, vk::CommandBuffer) {}; });
+        q.render_pass("T0", pass_desc, [&](handler& h) {
+            DRAW(A);
+            return [](vk::RenderPass, vk::CommandBuffer) {};
+        });
     }
 
     {
@@ -632,8 +639,10 @@ void test_case_1(graal::queue& q) {
                 .color_attachments = color,
         };
 
-        q.render_pass("T1", pass_desc,
-                [&](handler& h) { return [](vk::RenderPass, vk::CommandBuffer) {}; });
+        q.render_pass("T1", pass_desc, [&](handler& h) {
+            DRAW(B);
+            return [](vk::RenderPass, vk::CommandBuffer) {};
+        });
     }
 
     q.compute_pass("T2", [&](handler& h) {
@@ -650,8 +659,10 @@ void test_case_1(graal::queue& q) {
                 .color_attachments = color,
         };
 
-        q.render_pass("T3", pass_desc,
-                [&](handler& h) { return [](vk::RenderPass, vk::CommandBuffer) {}; });
+        q.render_pass("T3", pass_desc, [&](handler& h) {
+            DRAW(C);
+            return [](vk::RenderPass, vk::CommandBuffer) {};
+        });
     }
 
     q.compute_pass("T4", [&](handler& h) {
