@@ -3,6 +3,7 @@
 #include <memory>
 #include <optional>
 #include <type_traits>
+#include <cmath>
 
 #include <graal/access_mode.hpp>
 #include <graal/detail/named_object.hpp>

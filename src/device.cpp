@@ -139,7 +139,7 @@ void device_impl::create_vk_device_and_queues(vk::SurfaceKHR present_surface) {
                 break;
             }
         }
-        if (already_created) break;
+        if (already_created) continue;
         device_queue_create_infos.push_back(vk::DeviceQueueCreateInfo{
                 .queueFamilyIndex = family, .queueCount = 1, .pQueuePriorities = &queue_priority});
     }

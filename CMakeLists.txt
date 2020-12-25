@@ -116,7 +116,7 @@ add_executable(
   graal-test  "tests/imgui_impl_glfw.cpp" "tests/imgui_impl_vulkan.cpp"
              "tests/main.cpp" ${COMPILED_SHADERS} "tests/load_image.cpp" "tests/load_image.hpp")
 
-target_link_libraries(graal-test PRIVATE graal Vulkan::Vulkan imgui glfw OpenImageIO::OpenImageIO)
+target_link_libraries(graal-test PRIVATE graal imgui glfw OpenImageIO::OpenImageIO)
 set_target_properties(
     graal-test PROPERTIES
     VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
