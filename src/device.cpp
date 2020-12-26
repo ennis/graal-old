@@ -116,7 +116,7 @@ void device_impl::create_vk_device_and_queues(vk::SurfaceKHR present_surface) {
     graphics_queue_family_ = find_queue_family(
             phy.device, queue_family_props, vk::QueueFlagBits::eGraphics, present_surface);
     compute_queue_family_ =
-            find_queue_family(phy.device, queue_family_props, vk::QueueFlagBits::eCompute, nullptr);
+            find_queue_family(phy.device, queue_family_props, vk::QueueFlagBits::eCompute, nullptr)+1;    // TMP HACK
     transfer_queue_family_ = find_queue_family(
             phy.device, queue_family_props, vk::QueueFlagBits::eTransfer, nullptr);
 

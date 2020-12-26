@@ -45,7 +45,8 @@ public:
     template<typename T>
     void add_buffer_access(buffer<T>& buffer, vk::AccessFlags access_mask,
             vk::PipelineStageFlags input_stage, vk::PipelineStageFlags output_stage) const {
-        add_buffer_access(static_cast<std::shared_ptr<detail::buffer_impl>>(buffer.impl_), access_mask, input_stage, output_stage);
+        add_buffer_access(static_cast<std::shared_ptr<detail::buffer_impl>>(buffer.impl_),
+                access_mask, input_stage, output_stage);
     }
 
     // Called by image accessors to register an use of an image in a task
@@ -53,7 +54,8 @@ public:
     void add_image_access(image<Type> image, vk::AccessFlags access_mask,
             vk::PipelineStageFlags input_stage, vk::PipelineStageFlags output_stage,
             vk::ImageLayout layout) const {
-        add_image_access(static_cast<std::shared_ptr<detail::image_impl>>(image.impl_), access_mask, input_stage, output_stage, layout);
+        add_image_access(static_cast<std::shared_ptr<detail::image_impl>>(image.impl_), access_mask,
+                input_stage, output_stage, layout);
     }
 
     void add_swapchain_access(swapchain swapchain, vk::AccessFlags access_mask,
@@ -72,9 +74,9 @@ private:
             vk::PipelineStageFlags output_stage) const;
 
     // Called by image accessors to register an use of an image in a task
-    void add_image_access(std::shared_ptr<detail::image_resource> image, vk::AccessFlags access_mask,
-            vk::PipelineStageFlags input_stage, vk::PipelineStageFlags output_stage,
-            vk::ImageLayout layout) const;
+    void add_image_access(std::shared_ptr<detail::image_resource> image,
+            vk::AccessFlags access_mask, vk::PipelineStageFlags input_stage,
+            vk::PipelineStageFlags output_stage, vk::ImageLayout layout) const;
 
     detail::queue_impl& queue_;
     detail::task& task_;
@@ -127,10 +129,11 @@ public:
     /// (a task might be partially constructed), but no resource is leaked.
     /// In reasonable programs, the callback probably should not throw exceptions.
     template<typename F>
-    void render_pass(std::string_view name, const render_pass_desc& desc, F f) 
-    {
-        static_assert(std::is_invocable_v<std::invoke_result_t<F, handler&>, vk::RenderPass, vk::CommandBuffer>,
-            "render pass evaluation callback has an invalid signature: expected `void(vk::RenderPass, vk::CommandBuffer)`");
+    void render_pass(std::string_view name, const render_pass_desc& desc, F f) {
+        static_assert(std::is_invocable_v<std::invoke_result_t<F, handler&>, vk::RenderPass,
+                              vk::CommandBuffer>,
+                "render pass evaluation callback has an invalid signature: expected "
+                "`void(vk::RenderPass, vk::CommandBuffer)`");
 
         auto& task = create_render_pass_task(name, desc);
         handler h{*impl_, task};
@@ -142,18 +145,31 @@ public:
     /// @param f
     template<typename F>
     void compute_pass(F f) {
-        compute_pass("", std::move(f));
+        compute_pass_internal("", false, std::move(f));
     }
 
+    /// @brief Schedule a compute pass
+    /// @tparam F
+    /// @param f
     template<typename F>
-    void compute_pass(std::string_view name, F f) 
-    {
-        static_assert(std::is_invocable_v<std::invoke_result_t<F, handler&>, vk::CommandBuffer>,
-            "compute pass evaluation callback has an invalid signature: expected `void(vk::CommandBuffer)`");
+    void compute_pass(std::string_view name, F f) {
+        compute_pass_internal(name, false, std::move(f));
+    }
 
-        auto& task = create_compute_pass_task(name);
-        handler h{*impl_, task};
-        task.detail.compute.callback = f(h);
+    /// @brief Schedule a compute pass
+    /// @tparam F
+    /// @param f
+    template<typename F>
+    void compute_pass_async(F f) {
+        compute_pass_internal("", true, std::move(f));
+    }
+
+    /// @brief Schedule a compute pass
+    /// @tparam F
+    /// @param f
+    template<typename F>
+    void compute_pass_async(std::string_view name, F f) {
+        compute_pass_internal(name, true, std::move(f));
     }
 
     /*template<typename T>
@@ -169,12 +185,25 @@ public:
     void present(swapchain swapchain);
     void enqueue_pending_tasks();
 
-    [[nodiscard]] device get_device(); 
+    [[nodiscard]] device get_device();
 
 private:
+    template<typename F>
+    void compute_pass_internal(std::string_view name, bool async, F f) {
+        static_assert(std::is_invocable_v<std::invoke_result_t<F, handler&>, vk::CommandBuffer>,
+                "compute pass evaluation callback has an invalid signature: expected "
+                "`void(vk::CommandBuffer)`");
+
+        auto& task = create_compute_pass_task(name, async);
+        handler h{*impl_, task};
+        task.detail.compute.callback = f(h);
+    }
+
     [[nodiscard]] detail::task& create_render_pass_task(
             std::string_view name, const render_pass_desc& rpd) noexcept;
-    [[nodiscard]] detail::task& create_compute_pass_task(std::string_view name) noexcept;
+
+    [[nodiscard]] detail::task& create_compute_pass_task(
+            std::string_view name, bool async) noexcept;
 
     std::shared_ptr<detail::queue_impl> impl_;
 };

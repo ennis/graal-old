@@ -665,7 +665,7 @@ void test_case_1(graal::queue& q) {
         });
     }
 
-    q.compute_pass("T4", [&](handler& h) {
+    q.compute_pass_async("T4", [&](handler& h) {
         COMPUTE_READ(D2)
         COMPUTE_READ(C)
         COMPUTE_WRITE(E)

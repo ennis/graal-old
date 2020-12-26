@@ -180,9 +180,10 @@ struct task {
     /// NOTE a first serial is assigned when the task is created, without a queue, for the purposes of 
     /// DAG building. However, the serial might change after submission, due to task reordering.
     submission_number snn;
+    size_t submission_index = 0;
 
-    std::vector<uint64_t> preds;
-    std::vector<uint64_t> succs;
+    std::vector<size_t> preds;
+    std::vector<size_t> succs;
 
     uint64_t waits[max_queues] = {};
     struct {
@@ -192,7 +193,7 @@ struct task {
         uint64_t serial : 61 = 0;  // task sequence number
     } signal;
 
-    bool async;
+    bool async = false;
     std::vector<resource_access> accesses;
 
     union U {
