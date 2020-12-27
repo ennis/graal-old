@@ -137,7 +137,7 @@ public:
 
         auto& task = create_render_pass_task(name, desc);
         handler h{*impl_, task};
-        task.detail.render.callback = f(h);
+        task.d.u.render.callback = f(h);
     }
 
     /// @brief Schedule a compute pass
@@ -196,7 +196,7 @@ private:
 
         auto& task = create_compute_pass_task(name, async);
         handler h{*impl_, task};
-        task.detail.compute.callback = f(h);
+        task.d.u.compute.callback = f(h);
     }
 
     [[nodiscard]] detail::task& create_render_pass_task(

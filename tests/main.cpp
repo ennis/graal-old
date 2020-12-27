@@ -665,14 +665,14 @@ void test_case_1(graal::queue& q) {
         });
     }
 
-    q.compute_pass_async("T4", [&](handler& h) {
+    q.compute_pass("T4", [&](handler& h) {
         COMPUTE_READ(D2)
         COMPUTE_READ(C)
         COMPUTE_WRITE(E)
         return [](vk::CommandBuffer) {};
     });
 
-    q.compute_pass("T5", [&](handler& h) {
+    q.compute_pass_async("T5", [&](handler& h) {
         COMPUTE_READ(D1)
         COMPUTE_WRITE(F)
         return [](vk::CommandBuffer) {};

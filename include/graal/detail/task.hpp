@@ -25,22 +25,19 @@ using submit_callback_fn = void(vk::CommandBuffer);
 /// @brief Represents a resource access in a task.
 struct resource_access_details {
     /// @brief The layout into which the image must be before beginning the task.
-    vk::ImageLayout layout;  
+    vk::ImageLayout layout;
     /// @brief How the task is going to access the resource.
     vk::AccessFlags access_mask;
     vk::PipelineStageFlags input_stage;
     vk::PipelineStageFlags output_stage;
     /// @brief Whether sync needs a binary semaphore
-    //bool binary_semaphore = false;  
+    //bool binary_semaphore = false;
 };
 
+enum class task_type { render_pass, compute_pass, transfer, present };
 
-enum class task_type {
-    render_pass,
-    compute_pass,
-    transfer,
-    present
-};
+using per_queue_wait_serials = std::array<serial_number, max_queues>;
+using per_queue_wait_dst_stages = std::array<vk::PipelineStageFlags, max_queues>;
 
 // maybe "pass" would be more appropriate?
 struct task {
@@ -60,113 +57,118 @@ struct task {
         std::function<void(vk::CommandBuffer)> callback;
     };
 
+    struct details {
+        /// @brief Constructs a compute task
+        details() {
+            type_ = task_type::compute_pass;
+            new (&u.compute) compute_details;
+        }
+
+        /// @brief Constructs a present task
+        /// @param swapchain
+        /// @param image
+        details(vk::SwapchainKHR swapchain, uint32_t image_index) {
+            type_ = task_type::present;
+            new (&u.present) present_details;
+            u.present.swapchain = swapchain;
+            u.present.image_index = image_index;
+        }
+
+        /// @brief Constructs a renderpass task
+        details(const render_pass_desc& rpd) {
+            type_ = task_type::render_pass;
+            new (&u.render) render_details;
+
+            for (auto&& a : rpd.color_attachments) {
+                u.render.color_attachments.push_back(a);
+            }
+            for (auto&& a : rpd.input_attachments) {
+                u.render.input_attachments.push_back(a);
+            }
+            if (rpd.depth_attachment) { u.render.depth_attachment = *rpd.depth_attachment; }
+        }
+
+        ~details() {
+            destroy();
+        }
+
+        void destroy() {
+            switch (type_) {
+                case task_type::render_pass: u.render.~render_details(); break;
+                case task_type::present: u.present.~present_details(); break;
+                case task_type::compute_pass: u.compute.~compute_details(); break;
+            }
+        }
+
+        details(details&& t) noexcept : type_{t.type_} {
+            switch (t.type_) {
+                case task_type::render_pass:
+                    new (&u.render) render_details(std::move(t.u.render));
+                    break;
+                case task_type::compute_pass:
+                    new (&u.compute) compute_details(std::move(t.u.compute));
+                    break;
+                case task_type::present:
+                    new (&u.present) present_details(std::move(t.u.present));
+                    break;
+            }
+        }
+
+        details& operator=(details&& t) noexcept {
+            destroy();
+
+            type_ = t.type_;
+            switch (t.type_) {
+                case task_type::render_pass:
+                    new (&u.render) render_details(std::move(t.u.render));
+                    break;
+                case task_type::compute_pass:
+                    new (&u.compute) compute_details(std::move(t.u.compute));
+                    break;
+                case task_type::present:
+                    new (&u.present) present_details(std::move(t.u.present));
+                    break;
+            }
+
+            return *this;
+        }
+
+        [[nodiscard]] task_type type() const noexcept {
+            return type_;
+        }
+
+        // data specific to the task type
+        union U {
+            U() {
+            }
+            ~U() {
+            }
+            present_details present;
+            render_details render;
+            compute_details compute;
+        } u;
+
+    private:
+        task_type type_ = task_type::render_pass;
+    };
+
     /// @brief Constructs a compute task
-    task() 
-    {
-        type_ = task_type::compute_pass;
-        new (&detail.compute) compute_details;
+    task() : d{} {
     }
 
     /// @brief Constructs a present task
-    /// @param swapchain 
-    /// @param image 
-    task(vk::SwapchainKHR swapchain, uint32_t image_index) {
-        type_ = task_type::present;
-        new (&detail.present) present_details;
-        detail.present.swapchain = swapchain;
-        detail.present.image_index = image_index;
+    /// @param swapchain
+    /// @param image
+    task(vk::SwapchainKHR swapchain, uint32_t image_index) : d{swapchain, image_index} {
     }
 
     /// @brief Constructs a renderpass task
-    task(const render_pass_desc& rpd) {
-        type_ = task_type::render_pass;
-        new (&detail.render) render_details;
-
-        for (auto&& a : rpd.color_attachments) {
-            detail.render.color_attachments.push_back(a);
-        }
-        for (auto&& a : rpd.input_attachments) {
-            detail.render.input_attachments.push_back(a);
-        }
-        if (rpd.depth_attachment) {
-            detail.render.depth_attachment = *rpd.depth_attachment;
-        }
+    task(const render_pass_desc& rpd) : d{rpd} {
     }
 
-    ~task() {
-        destroy_detail();
+    [[nodiscard]] task_type type() const noexcept {
+        return d.type();
     }
-
-    task(task&& t) : 
-        name{ std::move(t.name) }, 
-        type_{ t.type_ },
-        snn{ t.snn },
-        preds{std::move(t.preds)},
-        succs{std::move(t.succs)},
-        accesses{ std::move(t.accesses) }
-    {
-        switch (t.type_) {
-        case task_type::render_pass: 
-            new (&detail.render) render_details(std::move(t.detail.render));
-            break;
-        case task_type::compute_pass:
-            new (&detail.compute) compute_details(std::move(t.detail.compute));
-            break;
-        case task_type::present:
-            new (&detail.present) present_details(std::move(t.detail.present));
-            break;
-        }
-    }
-
-    task& operator=(task&& t) {
-        destroy_detail();
-
-        name = std::move(t.name);
-        type_ = std::move(t.type_);
-        snn = std::move(t.snn);
-        preds = std::move(t.preds);
-        succs = std::move(t.succs);
-        accesses = std::move(t.accesses);
-
-        switch (t.type_) {
-        case task_type::render_pass:
-            new (&detail.render) render_details(std::move(t.detail.render));
-            break;
-        case task_type::compute_pass:
-            new (&detail.compute) compute_details(std::move(t.detail.compute));
-            break;
-        case task_type::present:
-            new (&detail.present) present_details(std::move(t.detail.present));
-            break;
-        }
-
-        return *this;
-    }
-
-    [[nodiscard]] task_type type() const noexcept { return type_; }
-
-    /*task(const task& t) :
-        name{ std::move(t.name) },
-        type{ std::move(t.type) },
-        snn{ std::move(t.snn) },
-        preds{ std::move(t.preds) },
-        succs{ std::move(t.succs) },
-        wait_binary{ std::move(t.wait_binary) },
-        signal_binary{ std::move(t.signal_binary) },
-        accesses{ std::move(t.accesses) }
-    {
-        switch (t.type) {
-        case task_type::render_pass:
-            new (&detail.render) render_details(std::move(t.detail.render));
-            break;
-        case task_type::compute_pass:
-            new (&detail.compute) compute_details(std::move(t.detail.compute));
-            break;
-        case task_type::present:
-            new (&detail.present) present_details(std::move(t.detail.present));
-            break;
-        }
-    }*/
 
     struct resource_access {
         size_t index;
@@ -175,51 +177,24 @@ struct task {
     };
 
     std::string name;
-
-    /// @brief The submission number (SNN).
-    /// NOTE a first serial is assigned when the task is created, without a queue, for the purposes of 
-    /// DAG building. However, the serial might change after submission, due to task reordering.
     submission_number snn;
     size_t submission_index = 0;
 
     std::vector<size_t> preds;
     std::vector<size_t> succs;
-
-    uint64_t waits[max_queues] = {};
-    struct {
-        uint64_t enabled : 1 =
-                0;  // whether we should signal the task sequence number on the timeline
-        uint64_t queue : 2 = 0;  // the queue of the timeline to signal
-        uint64_t serial : 61 = 0;  // task sequence number
-    } signal;
-
     bool async = false;
     std::vector<resource_access> accesses;
 
-    union U {
-        U() {}
-        ~U() {}
-        present_details present;
-        render_details render;
-        compute_details compute;
-    } detail;
+    // updated during scheduling
+    bool signal = false;
+    bool wait = false;
+    per_queue_wait_serials input_wait_serials{};
+    per_queue_wait_dst_stages input_wait_dst_stages{};
+
+    // data specific to the task type
+    details d;
 
 private:
-    task_type type_ = task_type::render_pass;
-
-    void destroy_detail() {
-        switch (type_) {
-        case task_type::render_pass:
-            detail.render.~render_details();
-            break;
-        case task_type::present:
-            detail.present.~present_details();
-            break;
-        case task_type::compute_pass:
-            detail.compute.~compute_details();
-            break;
-        }
-    }
 };
 
 }  // namespace graal::detail
