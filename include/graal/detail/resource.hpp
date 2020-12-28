@@ -39,13 +39,26 @@ class image_resource;
 class buffer_resource;
 class virtual_resource;
 
-struct resource_last_access_info {
-    std::array<serial_number, max_queues> access_sn{};
-    submission_number write_snn;
+struct resource_last_access_info 
+{
+    std::array<serial_number, max_queues> readers{};
+    submission_number writer;
     vk::ImageLayout layout = vk::ImageLayout::eUndefined;
     vk::Semaphore wait_semaphore;
-    vk::AccessFlags access_mask{};
+    vk::AccessFlags availability_mask{};
+    vk::AccessFlags visibility_mask{};
     vk::PipelineStageFlags stages{};
+
+    [[nodiscard]] bool has_readers() const noexcept {
+        for (auto r : readers) {
+            if (r) return true;
+        }
+        return false;
+    }
+
+    void clear_readers() noexcept {
+        for (auto& r : readers) { r = 0; }
+    }
 };
 
 /// @brief Base class for tracked resources.
@@ -95,7 +108,7 @@ public:
     }
 
     bool allocated = false;  // set to true once bind_memory has been called successfully
-    resource_last_access_info last_state;
+    resource_last_access_info state;
 private:
     // For each resource, we maintain an "user reference count" which represents the number of
     // user-facing objects (image<>, buffer<>, etc.) referencing the resource. This is used

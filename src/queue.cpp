@@ -77,17 +77,16 @@ struct temporary {
     /// @brief Constructs a temporary from an existing resource
     /// @param device
     /// @param resource
-    explicit temporary(resource_ptr r) : resource{std::move(r)}, state{resource->last_state} {
-        resource->last_state.wait_semaphore =
-                nullptr;  // we take ownership of the semaphore, if there's one
+    explicit temporary(resource_ptr r) : resource{std::move(r)}
+    {
     }
 
     /// @brief The resource
     resource_ptr resource;
-    std::vector<submission_number> readers;
-    submission_number writer{};
-    vk::ImageLayout layout = vk::ImageLayout::eUndefined;
-    resource_last_access_info state;
+    //std::vector<submission_number> readers;
+    //submission_number writer{};
+    //vk::ImageLayout layout = vk::ImageLayout::eUndefined;
+    //resource_last_access_info state;
 };
 
 std::string_view find_image_name(std::span<const temporary> temps, vk::Image image) {
@@ -131,6 +130,72 @@ std::string pipeline_stages_to_string_compact(vk::PipelineStageFlags value) {
     return result.substr(0, result.size() - 1);
 }
 
+std::string pipeline_stages_to_string(vk::PipelineStageFlags value) {
+    if (!value) return "empty";
+    std::string result; 
+    if (value & vk::PipelineStageFlagBits::eTopOfPipe) result += "TOP_OF_PIPE|";
+    if (value & vk::PipelineStageFlagBits::eDrawIndirect) result += "DRAW_INDIRECT|";
+    if (value & vk::PipelineStageFlagBits::eVertexInput) result += "VERTEX_INPUT|";
+    if (value & vk::PipelineStageFlagBits::eVertexShader) result += "VERTEX_SHADER|";
+    if (value & vk::PipelineStageFlagBits::eTessellationControlShader) result += "TESSELLATION_CONTROL_SHADER|";
+    if (value & vk::PipelineStageFlagBits::eTessellationEvaluationShader) result += "TESSELLATION_EVALUATION_SHADER|";
+    if (value & vk::PipelineStageFlagBits::eGeometryShader) result += "GEOMETRY_SHADER|";
+    if (value & vk::PipelineStageFlagBits::eFragmentShader) result += "FRAGMENT_SHADER|";
+    if (value & vk::PipelineStageFlagBits::eEarlyFragmentTests) result += "EARLY_FRAGMENT_TESTS|";
+    if (value & vk::PipelineStageFlagBits::eLateFragmentTests) result += "LATE_FRAGMENT_TESTS|";
+    if (value & vk::PipelineStageFlagBits::eColorAttachmentOutput) result += "COLOR_ATTACHMENT_OUTPUT|";
+    if (value & vk::PipelineStageFlagBits::eComputeShader) result += "COMPUTE_SHADER|";
+    if (value & vk::PipelineStageFlagBits::eTransfer) result += "TRANSFER|";
+    if (value & vk::PipelineStageFlagBits::eBottomOfPipe) result += "BOTTOM_OF_PIPE|";
+    if (value & vk::PipelineStageFlagBits::eHost) result += "HOST|";
+    if (value & vk::PipelineStageFlagBits::eAllGraphics) result += "ALL_GRAPHICS|";
+    if (value & vk::PipelineStageFlagBits::eAllCommands) result += "ALL_COMMANDS|";
+    if (value & vk::PipelineStageFlagBits::eTransformFeedbackEXT) result += "TRANSFORM_FEEDBACK_EXT|";
+    if (value & vk::PipelineStageFlagBits::eConditionalRenderingEXT) result += "CONDITIONAL_RENDERING_EXT|";
+    if (value & vk::PipelineStageFlagBits::eRayTracingShaderKHR) result += "ACCELERATION_STRUCTURE_BUILD_KHR|";
+    if (value & vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR) result += "RAY_TRACING_SHADER_KHR|";
+    if (value & vk::PipelineStageFlagBits::eShadingRateImageNV) result += "SHADING_RATE_IMAGE_NV|";
+    if (value & vk::PipelineStageFlagBits::eTaskShaderNV) result += "TASK_SHADER_NV|";
+    if (value & vk::PipelineStageFlagBits::eMeshShaderNV) result += "MESH_SHADER_NV|";
+    if (value & vk::PipelineStageFlagBits::eFragmentDensityProcessEXT) result += "FRAGMENT_DENSITY_PROCESS_EXT|";
+    if (value & vk::PipelineStageFlagBits::eCommandPreprocessNV) result += "COMMAND_PREPROCESS_NV|";
+    return result.substr(0, result.size() - 1);
+}
+
+std::string access_mask_to_string(vk::AccessFlags value) {
+    if (!value) return "empty";
+    std::string result;
+    if (value & vk::AccessFlagBits::eIndirectCommandRead) result += "INDIRECT_COMMAND_READ|";
+    if (value & vk::AccessFlagBits::eIndexRead) result += "INDEX_READ|";
+    if (value & vk::AccessFlagBits::eVertexAttributeRead) result += "VERTEX_ATTRIBUTE_READ|";
+    if (value & vk::AccessFlagBits::eUniformRead) result += "UNIFORM_READ|";
+    if (value & vk::AccessFlagBits::eInputAttachmentRead) result += "INPUT_ATTACHMENT_READ|";
+    if (value & vk::AccessFlagBits::eShaderRead) result += "SHADER_READ|";
+    if (value & vk::AccessFlagBits::eShaderWrite) result += "SHADER_WRITE|";
+    if (value & vk::AccessFlagBits::eColorAttachmentRead) result += "COLOR_ATTACHMENT_READ|";
+    if (value & vk::AccessFlagBits::eColorAttachmentWrite) result += "COLOR_ATTACHMENT_WRITE|";
+    if (value & vk::AccessFlagBits::eDepthStencilAttachmentRead) result += "DEPTH_STENCIL_ATTACHMENT_READ|";
+    if (value & vk::AccessFlagBits::eDepthStencilAttachmentWrite) result += "DEPTH_STENCIL_ATTACHMENT_WRITE|";
+    if (value & vk::AccessFlagBits::eTransferRead) result += "TRANSFER_READ|";
+    if (value & vk::AccessFlagBits::eTransferWrite) result += "TRANSFER_WRITE|";
+    if (value & vk::AccessFlagBits::eHostRead) result += "HOST_READ|";
+    if (value & vk::AccessFlagBits::eHostWrite) result += "HOST_WRITE|";
+    if (value & vk::AccessFlagBits::eMemoryRead) result += "MEMORY_READ|";
+    if (value & vk::AccessFlagBits::eMemoryWrite) result += "MEMORY_WRITE|";
+    if (value & vk::AccessFlagBits::eTransformFeedbackWriteEXT) result += "TRANSFORM_FEEDBACK_WRITE_EXT|";
+    if (value & vk::AccessFlagBits::eTransformFeedbackCounterReadEXT) result += "TRANSFORM_FEEDBACK_COUNTER_READ_EXT|";
+    if (value & vk::AccessFlagBits::eTransformFeedbackCounterWriteEXT) result += "TRANSFORM_FEEDBACK_COUNTER_WRITE_EXT|";
+    if (value & vk::AccessFlagBits::eConditionalRenderingReadEXT) result += "CONDITIONAL_RENDERING_READ_EXT|";
+    if (value & vk::AccessFlagBits::eColorAttachmentReadNoncoherentEXT) result += "COLOR_ATTACHMENT_READ_NONCOHERENT_EXT|";
+    if (value & vk::AccessFlagBits::eAccelerationStructureReadKHR) result += "ACCELERATION_STRUCTURE_READ_KHR|";
+    if (value & vk::AccessFlagBits::eAccelerationStructureWriteKHR) result += "ACCELERATION_STRUCTURE_WRITE_KHR|";
+    if (value & vk::AccessFlagBits::eShadingRateImageReadNV) result += "SHADING_RATE_IMAGE_READ_NV|";
+    if (value & vk::AccessFlagBits::eFragmentDensityMapReadEXT) result += "FRAGMENT_DENSITY_MAP_READ_EXT|";
+    if (value & vk::AccessFlagBits::eCommandPreprocessReadNV) result += "COMMAND_PREPROCESS_READ_NV|";
+    if (value & vk::AccessFlagBits::eCommandPreprocessWriteNV) result += "COMMAND_PREPROCESS_WRITE_NV|";
+    return result.substr(0, result.size() - 1);
+}
+
 std::string access_mask_to_string_compact(vk::AccessFlags value) {
     if (!value) return "{}";
     std::string result;
@@ -163,6 +228,31 @@ std::string access_mask_to_string_compact(vk::AccessFlags value) {
     if (value & vk::AccessFlagBits::eCommandPreprocessReadNV) result += "CPr,";
     if (value & vk::AccessFlagBits::eCommandPreprocessWriteNV) result += "CPw,";
     return result.substr(0, result.size() - 1);
+}
+
+std::string_view layout_to_string(vk::ImageLayout layout) {
+    switch (layout) {
+    case vk::ImageLayout::eUndefined: return "UNDEFINED";
+    case vk::ImageLayout::eGeneral: return "GENERAL";
+    case vk::ImageLayout::eColorAttachmentOptimal: return "COLOR_ATTACHMENT_OPTIMAL";
+    case vk::ImageLayout::eDepthStencilAttachmentOptimal: return "DEPTH_STENCIL_ATTACHMENT_OPTIMAL";
+    case vk::ImageLayout::eDepthStencilReadOnlyOptimal: return "DEPTH_STENCIL_READ_ONLY_OPTIMAL";
+    case vk::ImageLayout::eShaderReadOnlyOptimal: return "SHADER_READ_ONLY_OPTIMAL";
+    case vk::ImageLayout::eTransferSrcOptimal: return "TRANSFER_SRC_OPTIMAL";
+    case vk::ImageLayout::eTransferDstOptimal: return "TRANSFER_DST_OPTIMAL";
+    case vk::ImageLayout::ePreinitialized: return "PREINITIALIZED";
+    case vk::ImageLayout::eDepthReadOnlyStencilAttachmentOptimal: return "DROSA";
+    case vk::ImageLayout::eDepthAttachmentStencilReadOnlyOptimal: return "DASRO";
+    case vk::ImageLayout::eDepthAttachmentOptimal: return "DA";
+    case vk::ImageLayout::eDepthReadOnlyOptimal: return "DRO";
+    case vk::ImageLayout::eStencilAttachmentOptimal: return "SAO";
+    case vk::ImageLayout::eStencilReadOnlyOptimal: return "SRO";
+    case vk::ImageLayout::ePresentSrcKHR: return "PR";
+    case vk::ImageLayout::eSharedPresentKHR: return "SPR";
+    case vk::ImageLayout::eShadingRateOptimalNV: return "SR";
+    case vk::ImageLayout::eFragmentDensityMapOptimalEXT: return "FDM";
+    default: return "<invalid>";
+    }
 }
 
 std::string_view layout_to_string_compact(vk::ImageLayout layout) {
@@ -610,6 +700,8 @@ private:
     /// @return
     [[nodiscard]] bool writes_are_user_observable(resource& r) const noexcept;
 
+    void propagate_signal_wait();
+
     using resource_to_temporary_map = std::unordered_map<resource*, size_t>;
 
     device device_;
@@ -678,7 +770,7 @@ command_buffer_pool queue_impl::get_command_buffer_pool() {
 
 bool queue_impl::writes_are_user_observable(resource& r) const noexcept {
     // writes to the resources might be seen if there are still user handles to the resource
-    return r.last_state.write_snn.serial > batch_start_serial_ && !r.has_user_refs();
+    return r.state.writer.serial > batch_start_serial_ && !r.has_user_refs();
 }
 
 const task* queue_impl::get_unsubmitted_task(uint64_t sequence_number) const noexcept {
@@ -957,12 +1049,6 @@ struct schedule_ctx {
         submitted_tasks.resize(n_task);
         allocation_map.resize(n_tmp, (size_t) -1);
 
-        // prepare resources
-        for (size_t i = 0; i < n_tmp; ++i) {
-            // reset the temporary last write serial used to build the DAG
-            temporaries[i].state.write_snn.serial = 0;
-        }
-
         live.resize(n_tmp);
         dead.resize(n_tmp);
         gen.resize(n_tmp);
@@ -979,8 +1065,8 @@ struct schedule_ctx {
             live_sets[i].resize(n_tmp);
 
             for (const auto& r : tasks[i].accesses) {
-                if (is_read_access(r.details.access_mask)) { use_sets[i].set(r.index); }
-                if (is_write_access(r.details.access_mask)) { def_sets[i].set(r.index); }
+                if (is_read_access(r.dst_access_mask)) { use_sets[i].set(r.index); }
+                if (is_write_access(r.dst_access_mask)) { def_sets[i].set(r.index); }
             }
         }
     }
@@ -1098,9 +1184,9 @@ struct schedule_ctx {
                 pstate[1].stages[pipeline_stage_tracker::i_CR],
                 pstate[2].stages[pipeline_stage_tracker::i_CR],
                 pstate[3].stages[pipeline_stage_tracker::i_CR]);
-        fmt::print("Resources:\n");
+        /*fmt::print("Resources:\n");
         for (size_t i = 0; i < temporaries.size(); ++i) {
-            fmt::print("{:<10} {} W={}:{} A={},{},{},{} L={} AM={} S={}\n",
+            fmt::print("    {:<10} {} write={}:{} access=0:{},1:{},2:{},3:{} layout={} avail={} vis={} out_stage={}\n",
                     temporaries[i].resource->name(), live[i] ? "live" : "dead",
                     (uint64_t) temporaries[i].state.write_snn.queue,
                     (uint64_t) temporaries[i].state.write_snn.serial,
@@ -1109,9 +1195,10 @@ struct schedule_ctx {
                     (uint64_t) temporaries[i].state.access_sn[2],
                     (uint64_t) temporaries[i].state.access_sn[3],
                     layout_to_string_compact(temporaries[i].state.layout),
-                    access_mask_to_string_compact(temporaries[i].state.access_mask),
+                    access_mask_to_string_compact(temporaries[i].state.availability_mask),
+                    access_mask_to_string_compact(temporaries[i].state.visibility_mask),
                     pipeline_stages_to_string_compact(temporaries[i].state.stages));
-        }
+        }*/
         fmt::print("\n");
     }
 
@@ -1160,7 +1247,7 @@ struct schedule_ctx {
         }
     }
 
-    /// @brief Infers the necessary barriers for the given access in the given task.
+    /*/// @brief Infers the necessary barriers for the given access in the given task.
     /// @param tmp_index index of the temporary
     /// @param access access details
     /// @param snn task submission number (queue and serial)
@@ -1176,7 +1263,8 @@ struct schedule_ctx {
             per_queue_wait_dst_stages& wait_dst_stages, uint32_t& num_image_memory_barriers,
             uint32_t& num_buffer_memory_barriers, vk::PipelineStageFlags& src_stage_mask,
             vk::PipelineStageFlags& dst_stage_mask,
-            std::vector<vk::Semaphore>& out_wait_semaphores) {
+            std::vector<vk::Semaphore>& out_wait_semaphores)
+    {
         auto& tmp = temporaries[tmp_index];
         const bool reading = is_read_access(access.access_mask);
 
@@ -1225,38 +1313,27 @@ struct schedule_ctx {
         dst_stage_mask |= access.input_stage;
 
         // --- is a memory barrier necessary for this access?
-        // yes, if layout is different
-        const bool needs_layout_transition = tmp.state.layout != access.layout;
-        // covers RAW hazards, and visibility across different access types
-        const bool visibility_hazard =
-                (tmp.state.access_mask & access.access_mask) != access.access_mask;
-        // covers WAW hazards across the same access type (writes must happen in order)
-        const bool waw_hazard = writing && is_write_access(tmp.state.access_mask);
 
-        if (needs_layout_transition || visibility_hazard || waw_hazard) {
+        
+        // are all writes to the resource visible to the requested access type?
+        const bool writes_visible =
+            (tmp.state.visibility_mask & vk::AccessFlagBits::eMemoryRead)
+            || ((tmp.state.visibility_mask & access.access_mask) == access.access_mask);
+
+        // is the layout of the resource different?
+        const bool different_layout = tmp.state.layout != access.layout;
+
+        // is there a possible write-after-write hazard, that requires a memory dependency?
+        const bool write_after_write_hazard = writing && is_write_access(tmp.state.availability_mask);
+
+        if (!writes_visible || different_layout || write_after_write_hazard) 
+        {
             // the resource access needs a memory barrier
             if (auto img = tmp.resource->as_image()) {
                 // image barrier
-
-                // determine aspect mask
                 const auto format = img->format();
                 const auto vk_image = img->vk_image();
-                assert(vk_image && "image not realized");
-
-                // TODO move into a function (aspect_mask_from_format)
-                vk::ImageAspectFlags aspect_mask;
-                if (is_depth_only_format(format)) {
-                    aspect_mask = vk::ImageAspectFlagBits::eDepth;
-                } else if (is_stencil_only_format(format)) {
-                    aspect_mask = vk::ImageAspectFlagBits::eStencil;
-                } else if (is_depth_and_stencil_format(format)) {
-                    aspect_mask =
-                            vk::ImageAspectFlagBits::eDepth | vk::ImageAspectFlagBits::eStencil;
-                } else {
-                    aspect_mask = vk::ImageAspectFlagBits::eColor;
-                }
-                // TODO metadata? planes?
-
+                vk::ImageAspectFlags aspect_mask = format_aspect_mask(format);
                 const vk::ImageSubresourceRange subresource_range =
                         vk::ImageSubresourceRange{.aspectMask = aspect_mask,
                                 .baseMipLevel = 0,
@@ -1265,7 +1342,8 @@ struct schedule_ctx {
                                 .layerCount = VK_REMAINING_ARRAY_LAYERS};
 
                 image_memory_barriers.push_back(
-                        vk::ImageMemoryBarrier{.srcAccessMask = tmp.state.access_mask,
+                        vk::ImageMemoryBarrier{
+                                .srcAccessMask = tmp.state.availability_mask,
                                 .dstAccessMask = access.access_mask,
                                 .oldLayout = tmp.state.layout,
                                 .newLayout = access.layout,
@@ -1278,7 +1356,8 @@ struct schedule_ctx {
 
             } else if (auto buf = tmp.resource->as_buffer()) {
                 buffer_memory_barriers.push_back(
-                        vk::BufferMemoryBarrier{.srcAccessMask = tmp.state.access_mask,
+                        vk::BufferMemoryBarrier{
+                                .srcAccessMask = tmp.state.availability_mask,
                                 .dstAccessMask = access.access_mask,
                                 .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                                 .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
@@ -1288,14 +1367,17 @@ struct schedule_ctx {
                 buffer_memory_barriers_temporaries.push_back(tmp_index);
                 num_buffer_memory_barriers++;
             }
+
+            // all previous writes are flushed
+            tmp.state.availability_mask = {};
+            // update the access types that can now see the resource
+            tmp.state.visibility_mask |= access.access_mask;
+            tmp.state.layout = access.layout;
         }
 
         // --- update what we know about the resource after applying the barriers
-        tmp.state.layout = access.layout;
         tmp.state.stages = access.output_stage;
         if (writing) {
-            // The resource is modified, either through an actual write or a layout transition.
-            // The last version of the contents is visible only for the access flags given in this task.
             tmp.state.write_snn = snn;
             for (size_t iq = 0; iq < max_queues; ++iq) {
                 if (iq == snn.queue) {
@@ -1304,14 +1386,10 @@ struct schedule_ctx {
                     tmp.state.access_sn[iq] = 0;
                 }
             }
-            tmp.state.access_mask = access.access_mask;
         } else {
-            // Read-only access, a barrier has been inserted so that all writes to the resource are visible.
-            // Combine with the previous access flags.
             tmp.state.access_sn[snn.queue] = snn.serial;
-            tmp.state.access_mask |= access.access_mask;
         }
-    }
+    }*/
 
     void update_liveness(size_t task_index) {
         // update live/dead sets
@@ -1387,14 +1465,14 @@ struct schedule_ctx {
             // actually, if the resource was accessed in a different queue(s),
             // then there must be an execution dependency between the current task and all other queues
             for (size_t iq = 0; iq < max_queues; ++iq) {
-                if (tmp.state.access_sn[iq]) {
+                /*if (tmp.state.access_sn[iq]) {
                     if (pstate[iq].needs_execution_barrier(
                                 tmp.state.access_sn[iq], tmp.state.stages)) {
                         // can't prove that the queue has finished accessing the resource, can't consider it dead
                         kill.reset(i);
                         break;
                     }
-                }
+                }*/
             }
         }
 
@@ -1439,35 +1517,69 @@ struct schedule_ctx {
         const auto n_tmp = temporaries.size();
         const auto n_task = tasks.size();
 
-        const auto sn = next_sn++;
         task& t = tasks[task_index];
 
         // --- assign memory for all resources accessed in this task
-        for (const auto& access : t.accesses) {
+
+        per_queue_wait_serials wait_sn{};
+        per_queue_wait_dst_stages wait_dst_stages{};
+        uint32_t num_image_memory_barriers;
+        uint32_t num_buffer_memory_barriers;
+        vk::PipelineStageFlags src_stage_mask;
+        vk::PipelineStageFlags dst_stage_mask;
+        std::vector<vk::Semaphore> wait_semaphores;
+
+        // build source stage mask
+        for (auto p : t.preds) {
+            src_stage_mask |= tasks[p].output_stage_mask;
+        }
+
+        // build memory barriers
+        for (const auto& access : t.accesses) 
+        {
+            // issue: for each resource, 
+            // we need the flush access mask, which we get from the accesses in predecessors
+            // either:
+            // - 1. scan the pred for the corresponding resource access and get the flush mask here (but might be flushed twice?)
+            // - 2. track the flush mask on DAG creation (OK to track early since there's no reordering)
+
             assign_memory(access.index);
+            //src_stage_mask |=
+
+           /* memory_dependency(
+                access.index, 
+                access.details, 
+                t.snn, 
+                wait_sn,
+                wait_dst_stages, 
+                num_image_memory_barriers, 
+                num_buffer_memory_barriers, 
+                src_stage_mask,
+                dst_stage_mask,
+                wait_semaphores
+                );*/
         }
 
         // --- update liveness sets
         update_liveness(task_index);
 
-        per_queue_wait_serials wait_sn{};
-        per_queue_wait_dst_stages wait_dst_stages{};
 
-        /*// --- apply queue syncs
-        bool sem_wait = false;  // cross queue sync
+        // --- apply queue syncs
+       /* bool sem_wait = false;  // cross queue sync
         for (size_t iq = 0; iq < max_queues; ++iq) {
             if (wait_sn[iq]) {
                 // execution barrier necessary
                 // if the exec barrier is on a different queue, then it's going to be a semaphore wait,
                 // and this ensures that all stages have finished
                 pstate[iq].apply_execution_barrier(
-                        wait_sn[iq], iq != snn.queue ? vk::PipelineStageFlagBits::eBottomOfPipe
+                        wait_sn[iq], iq != t.snn.queue ? vk::PipelineStageFlagBits::eBottomOfPipe
                                                      : st.src_stage_mask);
                 sem_wait |= iq != t.snn.queue;
             }
-        }
+        }*/
         //sem_wait |= !wait_binary_semaphores.empty();
 
+        /*
         if (sem_wait) {
             // if a semaphore wait is necessary, must start a new batch
             submission_builder.start_batch(t.snn.queue, wait_sn, wait_dst_stages, {});
@@ -1594,14 +1706,14 @@ void dump_tasks(std::ostream& out, std::span<const task> tasks,
         {
             bool first = true;
             for (const auto& a : task.accesses) {
-                if (is_read_access(a.details.access_mask)) {
+                if (is_read_access(a.dst_access_mask)) {
                     if (!first) {
                         out << ",";
                     } else {
                         first = false;
                     }
                     out << temporaries[a.index].resource->name();
-                    out << "(" << access_mask_to_string_compact(a.details.access_mask) << ")";
+                    out << "(" << access_mask_to_string_compact(a.dst_access_mask) << ")";
                 }
             }
         }
@@ -1609,14 +1721,14 @@ void dump_tasks(std::ostream& out, std::span<const task> tasks,
         {
             bool first = true;
             for (const auto& a : task.accesses) {
-                if (is_write_access(a.details.access_mask)) {
+                if (is_write_access(a.dst_access_mask)) {
                     if (!first) {
                         out << ",";
                     } else {
                         first = false;
                     }
                     out << temporaries[a.index].resource->name();
-                    out << "(" << access_mask_to_string_compact(a.details.access_mask) << ")";
+                    out << "(" << access_mask_to_string_compact(a.dst_access_mask) << ")";
                 }
             }
         }
@@ -1660,38 +1772,39 @@ void queue_impl::enqueue_pending_tasks() {
 
     // dump
     for (const auto& t : tasks_) {
-        fmt::print("task: {} ({}:{})", t.name, (uint64_t)t.snn.queue, (uint64_t)t.snn.serial);
-        fmt::print("\n    accesses: \n");
-        for (const auto& a : t.accesses) {
-            fmt::print("        {} ({},{}) in:{} out:{} pred:",
-                temporaries_[a.index].resource->name(),
-                access_mask_to_string_compact(a.details.access_mask),
-                layout_to_string_compact(a.details.layout),
-                pipeline_stages_to_string_compact(a.details.input_stage),
-                pipeline_stages_to_string_compact(a.details.output_stage));
-            dump_vector_set(a.preds);
-            fmt::print("\n");
+        fmt::print("task: {} ({}:{})\n", t.name, (uint64_t)t.snn.queue, (uint64_t)t.snn.serial);
+        fmt::print("    input execution barrier: {}->{}\n", pipeline_stages_to_string(t.src_stage_mask), pipeline_stages_to_string(t.input_stage_mask));
+        fmt::print("    input memory barriers: \n");
+        for (const auto& imb : t.image_memory_barriers) 
+        {
+            fmt::print("        {} access:{}->{} layout:{}->{}\n",
+                find_image_name(temporaries_, imb.image),
+                access_mask_to_string(imb.srcAccessMask),
+                access_mask_to_string(imb.dstAccessMask),
+                layout_to_string(imb.oldLayout),
+                layout_to_string(imb.newLayout));
         }
         if (t.wait) {
             fmt::print("    wait: \n");
             if (t.input_wait_serials[0]) {
                 fmt::print("        0:{}|{}\n", t.input_wait_serials[0],
-                    pipeline_stages_to_string_compact(t.input_wait_dst_stages[0]));
+                    pipeline_stages_to_string(t.input_wait_dst_stages[0]));
             }
             if (t.input_wait_serials[1]) {
                 fmt::print("        1:{}|{}\n", t.input_wait_serials[1],
-                    pipeline_stages_to_string_compact(t.input_wait_dst_stages[1]));
+                    pipeline_stages_to_string(t.input_wait_dst_stages[1]));
             }
             if (t.input_wait_serials[2]) {
                 fmt::print("        2:{}|{}\n", t.input_wait_serials[2],
-                    pipeline_stages_to_string_compact(t.input_wait_dst_stages[2]));
+                    pipeline_stages_to_string(t.input_wait_dst_stages[2]));
             }
             if (t.input_wait_serials[3]) {
                 fmt::print("        3:{}|{}\n", t.input_wait_serials[3],
-                    pipeline_stages_to_string_compact(t.input_wait_dst_stages[3]));
+                    pipeline_stages_to_string(t.input_wait_dst_stages[3]));
             }
         }
 
+        fmt::print("    output stage: {}\n", pipeline_stages_to_string(t.output_stage_mask));
         if (t.signal) {
             fmt::print("    signal: {}:{}\n", (uint64_t)t.snn.queue, (uint64_t)t.snn.serial);
         }
@@ -1701,20 +1814,15 @@ void queue_impl::enqueue_pending_tasks() {
     schedule_ctx ctx{device_, queue_indices_, batch_start_serial_ + 1, tasks_, temporaries_,
         {} };
     while (ctx.schedule_next()) {}
-    size_t cb_count = ctx.finish_pending_cb_batches();
-    ctx.allocate_memory();
-
-    // the state so far:
-    // - `ctx.submitted_tasks` contains a list of all submitted tasks, in order
-    // - each entry in `ctx.submits` corresponds to a vkQueueSubmit
-    // - `cb_count` is the total number of command buffers necessary
-    // - `cctx.submitted_tasks[i].cb_index` is the index of the command buffer for task i
 
     {
         std::ofstream out_graphviz{
-                fmt::format("graal_test_{}.dot", batch_start_serial_), std::ios::trunc};
+                fmt::format("graal_test_{}.dot", batch_start_serial_), std::ios::trunc };
         dump_tasks(out_graphviz, tasks_, temporaries_, ctx.submitted_tasks);
     }
+
+    size_t cb_count = ctx.finish_pending_cb_batches();
+    ctx.allocate_memory();
 
     //---------------------------------------------------
     // fill command buffers
@@ -1761,7 +1869,6 @@ void queue_impl::enqueue_pending_tasks() {
     batch_resources.reserve(temporaries_.size());
     for (auto tmp : temporaries_) {
         // store last known state of the resource objects
-        tmp.resource->last_state = tmp.state;
         batch_resources.push_back(std::move(tmp.resource));
     }
 
@@ -1815,7 +1922,6 @@ void queue_impl::wait_for_task(uint64_t sequence_number) {
 }
 
 
-
 /// @brief synchronizes two tasks
 /// @param before
 /// @param after Sequence number of the task to execute after. Must correspond to an unsubmitted task.
@@ -1834,7 +1940,7 @@ void queue_impl::add_task_dependency(submission_number before_snn, task& after, 
         auto& before = tasks_[local_task_index];
 
         // --- Intra-batch synchronization
-        if (after.snn.queue != before_snn.queue || after.wait || before.signal) {
+        if (after.snn.queue != before_snn.queue) {
             // cross-queue dependency w/ timeline semaphore
             before.signal = true;
             after.wait = true;
@@ -1844,6 +1950,7 @@ void queue_impl::add_task_dependency(submission_number before_snn, task& after, 
 
         after.preds.push_back(local_task_index);
         before.succs.push_back(after.snn.serial - batch_start_serial_ - 1);
+        after.src_stage_mask |= before.output_stage_mask;
     }
 }
 
@@ -1854,45 +1961,104 @@ void queue_impl::add_resource_dependency(
         task& t, resource_ptr resource, const resource_access_details& access)
 {
     const auto tmp_index = get_resource_tmp_index(resource);
-    auto& tmp = temporaries_[tmp_index];
-    const bool writing = !!access.output_stage;
+    auto& tmp = *temporaries_[tmp_index].resource;
+    const bool writing = !!access.output_stage || tmp.state.layout != access.layout;
 
-    std::vector<submission_number> preds;
+    auto old_layout = tmp.state.layout;
+    auto src_access_mask = tmp.state.availability_mask;
+    t.input_stage_mask |= access.input_stage;
+
     if (writing) {
-        if (tmp.readers.empty()) {
+        if (tmp.state.has_readers()) {
             // WAW
-            if (tmp.writer.serial) {
-                add_task_dependency(tmp.writer, t, access.input_stage);
-                preds.push_back(tmp.writer);
+            if (tmp.state.writer.serial) {
+                add_task_dependency(tmp.state.writer, t, access.input_stage);
             }
         }
         else {
             // WAR
-            for (auto r : tmp.readers) {
-                add_task_dependency(r, t, access.input_stage);
+            for (size_t i = 0; i < max_queues; ++i) {
+                if (auto r = tmp.state.readers[i]) {
+                    add_task_dependency(submission_number{ .queue = i, .serial = r }, t, access.input_stage);
+                }
             }
-            preds = std::move(tmp.readers);
         }
-        tmp.readers.clear();
-        tmp.writer = t.snn;
-        tmp.layout = access.layout;
+        tmp.state.clear_readers();
+        tmp.state.writer = t.snn;
+        t.output_stage_mask |= access.output_stage;
     }
     else {
         // RAW
         // a read without a write is probably an uninitialized access
-        if (tmp.writer.serial) {
-            add_task_dependency(tmp.writer, t, access.input_stage);
-            preds.push_back(tmp.writer);
+        if (tmp.state.writer.serial) {
+            add_task_dependency(tmp.state.writer, t, access.input_stage);
         } 
-        tmp.readers.push_back(t.snn);
+        tmp.state.readers[t.snn.queue] = std::max(tmp.state.readers[t.snn.queue], t.snn.serial);
     }
 
-    // add resource dependency to the task and update resource usage flags
-    t.accesses.push_back(
-         task::resource_access{
-            .index = tmp_index, 
-            .preds = std::move(preds),
-            .details = access});
+    // are all writes to the resource visible to the requested access type?
+    const bool writes_visible =
+        (tmp.state.visibility_mask & vk::AccessFlagBits::eMemoryRead)
+        || ((tmp.state.visibility_mask & access.access_mask) == access.access_mask);
+
+    // is the layout of the resource different?
+    const bool layout_transition = tmp.state.layout != access.layout;
+
+    // is there a possible write-after-write hazard, that requires a memory dependency?
+    const bool write_after_write_hazard = writing && is_write_access(tmp.state.availability_mask);
+
+    if (!writes_visible || layout_transition || write_after_write_hazard)
+    {
+        // no need to make memory visible if we're writing to the resource
+        const auto dst_access_mask = !is_read_access(access.access_mask) ? vk::AccessFlags{} : access.access_mask;
+
+        // the resource access needs a memory barrier
+        if (auto img = tmp.as_image()) {
+            // image barrier
+            const auto format = img->format();
+            const auto vk_image = img->vk_image();
+            vk::ImageAspectFlags aspect_mask = format_aspect_mask(format);
+            const vk::ImageSubresourceRange subresource_range =
+                vk::ImageSubresourceRange{ .aspectMask = aspect_mask,
+                        .baseMipLevel = 0,
+                        .levelCount = VK_REMAINING_MIP_LEVELS,
+                        .baseArrayLayer = 0,
+                        .layerCount = VK_REMAINING_ARRAY_LAYERS };
+
+            t.image_memory_barriers.push_back(
+                vk::ImageMemoryBarrier{
+                        .srcAccessMask = tmp.state.availability_mask,
+                        .dstAccessMask = dst_access_mask,
+                        .oldLayout = tmp.state.layout,
+                        .newLayout = access.layout,
+                        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                        .image = vk_image,
+                        .subresourceRange = subresource_range });
+
+        }
+        else if (auto buf = tmp.as_buffer()) {
+            t.buffer_memory_barriers.push_back(
+                vk::BufferMemoryBarrier{
+                        .srcAccessMask = tmp.state.availability_mask,
+                        .dstAccessMask = dst_access_mask,
+                        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                        .buffer = buf->vk_buffer(),
+                        .offset = 0,
+                        .size = VK_WHOLE_SIZE });
+        }
+
+        tmp.state.availability_mask = {};
+        // update the access types that can now see the resource
+        tmp.state.visibility_mask |= access.access_mask;
+        tmp.state.layout = access.layout;
+    }
+
+    // all previous writes are flushed
+    if (writing) {
+        tmp.state.availability_mask |= access.access_mask;
+    }
 }
 
 }  // namespace detail
