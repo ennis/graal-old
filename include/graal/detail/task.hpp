@@ -170,18 +170,23 @@ struct task {
         return d.type();
     }
 
+    bool needs_barrier() const noexcept {
+        return src_stage_mask != vk::PipelineStageFlagBits::eTopOfPipe
+            || input_stage_mask != vk::PipelineStageFlagBits::eBottomOfPipe
+            || !buffer_memory_barriers.empty()
+            || !image_memory_barriers.empty();
+    }
+
     struct resource_access {
         size_t index;
-        std::vector<submission_number> preds;
-        vk::ImageLayout old_layout;
-        vk::ImageLayout new_layout;
-        vk::AccessFlags src_access_mask;
-        vk::AccessFlags dst_access_mask;
+        vk::AccessFlags access_mask;
     };
 
     std::string name;
     submission_number snn;
-    size_t submission_index = 0;
+
+    size_t submit_batch_index = 0; 
+    size_t submit_batch_cb_index = 0;
 
     std::vector<size_t> preds;
     std::vector<size_t> succs;
@@ -192,9 +197,9 @@ struct task {
     std::vector<vk::BufferMemoryBarrier> buffer_memory_barriers;
 
     // updated during scheduling
-    vk::PipelineStageFlags src_stage_mask;
-    vk::PipelineStageFlags input_stage_mask;
-    vk::PipelineStageFlags output_stage_mask;
+    vk::PipelineStageFlags src_stage_mask{};
+    vk::PipelineStageFlags input_stage_mask{};
+    vk::PipelineStageFlags output_stage_mask{};
     bool signal = false;
     bool wait = false;
     per_queue_wait_serials input_wait_serials{};

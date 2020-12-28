@@ -529,7 +529,7 @@ int main() {
 
     //=======================================================
     // ImGui setup
-    const ImGui_ImplVulkan_InitInfo imgui_vk_init = {
+    /*const ImGui_ImplVulkan_InitInfo imgui_vk_init = {
             .Instance = dev.get_vk_instance(),
             .PhysicalDevice = dev.get_vk_physical_device(),
             .Device = dev.get_vk_device(),
@@ -538,7 +538,7 @@ int main() {
             .PipelineCache = pipeline_cache,
             .DescriptorPool = descriptor_pool,
             .MinImageCount = 2,
-    };
+    };*/
 
     //=======================================================
     queue q{dev};
@@ -608,107 +608,109 @@ namespace graal {}  // namespace graal
 //=============================================================================
 void test_case_1(graal::queue& q) {
     graal::device dev = q.get_device();
-    VIMG(A)
-    VIMG(B)
-    VIMG(C)
-    VIMG(D1)
-    VIMG(D2)
-    VIMG(E)
-    VIMG(F)
-    VIMG(G)
-    VIMG(H)
-    VIMG(I)
-    VIMG(J)
-    VIMG(K)
-
     {
-        attachment color[] = {attachment{A, attachment_load_op::clear, attachment_store_op::store}};
-        render_pass_desc pass_desc{
-                .color_attachments = color,
-        };
+        VIMG(A)
+            VIMG(B)
+            VIMG(C)
+            VIMG(D1)
+            VIMG(D2)
+            VIMG(E)
+            VIMG(F)
+            VIMG(G)
+            VIMG(H)
+            VIMG(I)
+            VIMG(J)
+            VIMG(K)
 
-        q.render_pass("T0", pass_desc, [&](handler& h) {
-            DRAW(A);
-            return [](vk::RenderPass, vk::CommandBuffer) {};
-        });
+        {
+            attachment color[] = { attachment{A, attachment_load_op::clear, attachment_store_op::store} };
+            render_pass_desc pass_desc{
+                    .color_attachments = color,
+            };
+
+            q.render_pass("T0", pass_desc, [&](handler& h) {
+                DRAW(A);
+                return [](vk::RenderPass, vk::CommandBuffer) {};
+                });
+        }
+
+        {
+            attachment color[] = { attachment{B, attachment_load_op::clear, attachment_store_op::store} };
+            render_pass_desc pass_desc{
+                    .color_attachments = color,
+            };
+
+            q.render_pass("T1", pass_desc, [&](handler& h) {
+                DRAW(B);
+                return [](vk::RenderPass, vk::CommandBuffer) {};
+                });
+        }
+
+        q.compute_pass("T2", [&](handler& h) {
+            COMPUTE_READ(A)
+                COMPUTE_READ(B)
+                COMPUTE_WRITE(D1)
+                COMPUTE_WRITE(D2)
+                return [](vk::CommandBuffer) {};
+            });
+
+        {
+            attachment color[] = { attachment{C, attachment_load_op::clear, attachment_store_op::store} };
+            render_pass_desc pass_desc{
+                    .color_attachments = color,
+            };
+
+            q.render_pass("T3", pass_desc, [&](handler& h) {
+                DRAW(C);
+                return [](vk::RenderPass, vk::CommandBuffer) {};
+                });
+        }
+
+        q.compute_pass_async("T4", [&](handler& h) {
+            COMPUTE_READ(D2)
+                COMPUTE_READ(C)
+                COMPUTE_WRITE(E)
+                return [](vk::CommandBuffer) {};
+            });
+
+        q.compute_pass("T5", [&](handler& h) {
+            COMPUTE_READ(D1)
+                COMPUTE_WRITE(F)
+                return [](vk::CommandBuffer) {};
+            });
+
+        q.compute_pass("T6", [&](handler& h) {
+            COMPUTE_READ(E)
+                COMPUTE_READ(F)
+                COMPUTE_WRITE(G)
+                return [](vk::CommandBuffer) {};
+            });
+
+        q.compute_pass("T7", [&](handler& h) {
+            COMPUTE_READ(G) COMPUTE_WRITE(H) return [](vk::CommandBuffer) {};
+            });
+        q.compute_pass("T8", [&](handler& h) {
+            COMPUTE_READ(H) COMPUTE_WRITE(I) return [](vk::CommandBuffer) {};
+            });
+        q.compute_pass("T9", [&](handler& h) {
+            COMPUTE_READ(I) COMPUTE_READ(G) COMPUTE_WRITE(J) return [](vk::CommandBuffer) {};
+            });
+        q.compute_pass("T10", [&](handler& h) {
+            COMPUTE_READ(J) COMPUTE_WRITE(K) return [](vk::CommandBuffer) {};
+            });
+
+        /*A.discard();
+      B.discard();
+      C.discard();
+      D1.discard();
+      D2.discard();
+      E.discard();
+      F.discard();
+      G.discard();
+      H.discard();
+      I.discard();
+      J.discard();*/
     }
-
-    {
-        attachment color[] = {attachment{B, attachment_load_op::clear, attachment_store_op::store}};
-        render_pass_desc pass_desc{
-                .color_attachments = color,
-        };
-
-        q.render_pass("T1", pass_desc, [&](handler& h) {
-            DRAW(B);
-            return [](vk::RenderPass, vk::CommandBuffer) {};
-        });
-    }
-
-    q.compute_pass("T2", [&](handler& h) {
-        COMPUTE_READ(A)
-        COMPUTE_READ(B)
-        COMPUTE_WRITE(D1)
-        COMPUTE_WRITE(D2)
-        return [](vk::CommandBuffer) {};
-    });
-
-    {
-        attachment color[] = {attachment{C, attachment_load_op::clear, attachment_store_op::store}};
-        render_pass_desc pass_desc{
-                .color_attachments = color,
-        };
-
-        q.render_pass("T3", pass_desc, [&](handler& h) {
-            DRAW(C);
-            return [](vk::RenderPass, vk::CommandBuffer) {};
-        });
-    }
-
-    q.compute_pass_async("T4", [&](handler& h) {
-        COMPUTE_READ(D2)
-        COMPUTE_READ(C)
-        COMPUTE_WRITE(E)
-        return [](vk::CommandBuffer) {};
-    });
-
-    q.compute_pass("T5", [&](handler& h) {
-        COMPUTE_READ(D1)
-        COMPUTE_WRITE(F)
-        return [](vk::CommandBuffer) {};
-    });
-
-    q.compute_pass("T6", [&](handler& h) {
-        COMPUTE_READ(E)
-        COMPUTE_READ(F)
-        COMPUTE_WRITE(G)
-        return [](vk::CommandBuffer) {};
-    });
-
-    q.compute_pass("T7", [&](handler& h) {
-        COMPUTE_READ(G) COMPUTE_WRITE(H) return [](vk::CommandBuffer) {};
-    });
-    q.compute_pass("T8", [&](handler& h) {
-        COMPUTE_READ(H) COMPUTE_WRITE(I) return [](vk::CommandBuffer) {};
-    });
-    q.compute_pass("T9", [&](handler& h) {
-        COMPUTE_READ(I) COMPUTE_READ(G) COMPUTE_WRITE(J) return [](vk::CommandBuffer) {};
-    });
-    q.compute_pass("T10", [&](handler& h) {
-        COMPUTE_READ(J) COMPUTE_WRITE(K) return [](vk::CommandBuffer) {};
-    });
-
-    /*A.discard();
-  B.discard();
-  C.discard();
-  D1.discard();
-  D2.discard();
-  E.discard();
-  F.discard();
-  G.discard();
-  H.discard();
-  I.discard();
-  J.discard();*/
 
     q.enqueue_pending_tasks();
 

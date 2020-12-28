@@ -96,7 +96,8 @@ void swapchain_impl::resize(range_2d framebuffer_size, vk::SurfaceKHR surface) {
     auto image_count = caps.surfaceCapabilities.minImageCount + 1;
     if (max_image_count > 0 && image_count > max_image_count) { image_count = max_image_count; }
 
-    const auto graphics_queue_family = device_.get_graphics_queue_family();
+    const auto queue_indices = device_.get_queue_indices();
+    const auto graphics_queue_family = device_.get_queue_family_by_index(queue_indices.present);
     const vk::SharingMode swapchain_image_sharing_mode = vk::SharingMode::eExclusive;
     const uint32_t share_queue_families[] = {graphics_queue_family};
 

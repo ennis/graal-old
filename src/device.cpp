@@ -116,7 +116,7 @@ void device_impl::create_vk_device_and_queues(vk::SurfaceKHR present_surface) {
     graphics_queue_family_ = find_queue_family(
             phy.device, queue_family_props, vk::QueueFlagBits::eGraphics, present_surface);
     compute_queue_family_ =
-            find_queue_family(phy.device, queue_family_props, vk::QueueFlagBits::eCompute, nullptr)+1;    // TMP HACK
+            find_queue_family(phy.device, queue_family_props, vk::QueueFlagBits::eCompute, nullptr);
     transfer_queue_family_ = find_queue_family(
             phy.device, queue_family_props, vk::QueueFlagBits::eTransfer, nullptr);
 
@@ -184,9 +184,16 @@ void device_impl::create_vk_device_and_queues(vk::SurfaceKHR present_surface) {
     physical_device_ = phy.device;
     physical_device_properties_ = phy.properties;
     physical_device_features_ = phy.features;
+
     queues_[graphics_queue_index] = graphics_queue;
     queues_[compute_queue_index] = compute_queue;
     queues_[transfer_queue_index] = transfer_queue;
+
+    queue_family_indices_[graphics_queue_index] = graphics_queue_family_;
+    queue_family_indices_[compute_queue_index] = compute_queue_family_;
+    queue_family_indices_[transfer_queue_index] = transfer_queue_family_;
+    queue_family_indices_[present_queue_index] = graphics_queue_family_;
+
     queue_indices_.graphics = graphics_queue_index;
     queue_indices_.compute = compute_queue_index;
     queue_indices_.transfer = transfer_queue_index;
