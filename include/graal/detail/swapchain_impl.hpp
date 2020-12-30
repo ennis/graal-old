@@ -38,9 +38,9 @@ public:
         return format_;
     }
 
-private:
     void acquire_next_image();
 
+private:
     device device_;
     vk::SwapchainKHR swapchain_;
     image_format format_;

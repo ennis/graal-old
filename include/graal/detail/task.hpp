@@ -202,6 +202,7 @@ struct task {
     vk::PipelineStageFlags output_stage_mask{};
     bool signal = false;
     bool wait = false;
+    std::vector<vk::Semaphore> input_wait_semaphores;
     per_queue_wait_serials input_wait_serials{};
     per_queue_wait_dst_stages input_wait_dst_stages{};
 

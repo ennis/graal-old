@@ -1,6 +1,5 @@
 #pragma once
 #include <graal/bitmask.hpp>
-#include <graal/detail/named_object.hpp>
 #include <graal/detail/sequence_number.hpp>
 #include <graal/device.hpp>
 #include <graal/image_format.hpp>
@@ -62,7 +61,8 @@ struct resource_last_access_info
 };
 
 /// @brief Base class for tracked resources.
-class resource : public named_object {
+class resource 
+{
     friend class queue_impl;
 
 public:
@@ -107,6 +107,10 @@ public:
         return user_ref_count_.load(std::memory_order_relaxed) != 0;
     }
 
+    [[nodiscard]] std::string_view name() const { return name_; }
+    void set_name(std::string name);
+
+
     bool allocated = false;  // set to true once bind_memory has been called successfully
     resource_last_access_info state;
 private:
@@ -114,8 +118,10 @@ private:
     // user-facing objects (image<>, buffer<>, etc.) referencing the resource. This is used
     // when submitting a batch to determine whether there exists user-facing references to the resource.
     // If not, then the queue can perform optimizations knowing that the program will not use the resource in following batches.
+
     mutable std::atomic_uint32_t user_ref_count_ = 0;
     resource_type type_;
+    std::string name_;
 };
 
 using resource_ptr = std::shared_ptr<resource>;

@@ -21,6 +21,10 @@ vk::Image swapchain::current_image() const noexcept {
     return impl_->current_image();
 }
 
+void swapchain::acquire_next_image() {
+    impl_->acquire_next_image();
+}
+
 uint32_t swapchain::current_image_index() const noexcept {
     return impl_->current_image_index();
 }

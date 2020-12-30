@@ -9,6 +9,7 @@
 #include <graal/detail/named_object.hpp>
 #include <graal/detail/resource.hpp>
 #include <graal/errors.hpp>
+#include <graal/instance.hpp>
 #include <graal/image_format.hpp>
 #include <graal/image_type.hpp>
 #include <graal/image_usage.hpp>
@@ -116,9 +117,16 @@ public:
         return props_.array_layers;
     }
 
-    /*[[nodiscard]] vk::Image vk_image() const noexcept {
-        return image_resource::image_;
-    }*/
+    void set_name(std::string name) { 
+        const auto vk_device = device_.get_vk_device();
+        vk::DebugUtilsObjectNameInfoEXT object_name_info{
+             .objectType = vk::ObjectType::eImage,
+             .objectHandle = (uint64_t)(VkImage)image_,
+             .pObjectName = name.c_str(),
+        };
+        vk_device.setDebugUtilsObjectNameEXT(object_name_info, vk_default_dynamic_loader);
+        resource::set_name(name);
+    }
 
     allocation_requirements get_allocation_requirements(vk::Device device) override;
 

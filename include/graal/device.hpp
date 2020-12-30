@@ -10,6 +10,8 @@
 
 namespace graal {
 
+extern vk::DispatchLoaderDynamic vk_default_dynamic_loader;
+
 struct queue_indices {
     uint8_t graphics;
     uint8_t compute;

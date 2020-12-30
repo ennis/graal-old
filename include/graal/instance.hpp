@@ -9,4 +9,5 @@ vk::Instance initialize_vulkan_instance(
     std::span<const char *const> required_instance_extensions);
 vk::Instance get_vulkan_instance();
 void         release_vulkan_instance();
+
 } // namespace graal

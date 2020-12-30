@@ -3,6 +3,7 @@
 namespace graal {
 
 namespace {
+
 vk::Instance vulkan_instance;
 
 /// @brief List of validation layers to enable
@@ -36,6 +37,7 @@ vk::Instance initialize_vulkan_instance(std::span<const char* const> required_in
     instance_extensions.assign(
             required_instance_extensions.begin(), required_instance_extensions.end());
     instance_extensions.push_back("VK_KHR_get_surface_capabilities2");
+    instance_extensions.push_back("VK_EXT_debug_utils");
 
     vk::ApplicationInfo app_info{.pApplicationName = "graal",
             .applicationVersion = 1,

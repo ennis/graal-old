@@ -547,7 +547,7 @@ int main() {
     //test_parallel_branches(q);
     //test_aliasing_pipelining_conflicts(q);
 
-    auto tex = load_texture(q, project_root_path / "data/images/LEvnRX1.jpg");
+    auto tex = load_texture(q, project_root_path / "data/images/LEvnRX1.jpg", graal::image_usage::sampled | graal::image_usage::storage | graal::image_usage::transfer_src);
 
     auto pp_state = init_pipeline(dev);
 
@@ -581,8 +581,46 @@ int main() {
             };
 
             q.render_pass(pass_desc, [&](handler& h) {
-                DRAW_SWAPCHAIN(swapchain)
-                return [](vk::RenderPass, vk::CommandBuffer) {};
+                h.add_image_access(tex, vk::AccessFlagBits::eTransferRead,
+                        vk::PipelineStageFlagBits::eTransfer, {},
+                        vk::ImageLayout::eTransferSrcOptimal);
+
+                h.add_swapchain_access(swapchain, vk::AccessFlagBits::eTransferWrite,
+                        vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eTransfer,
+                        vk::ImageLayout::eTransferDstOptimal);
+
+                const int32_t blit_w = std::min((int)tex.width(), display_w);
+                const int32_t blit_h = std::min((int)tex.height(), display_h);
+
+                return [=](vk::RenderPass, vk::CommandBuffer cb) {
+
+
+                    std::array<vk::Offset3D, 2> src_offsets { {
+                            vk::Offset3D{ .x = 0, .y = 0, .z = 0 },
+                                vk::Offset3D{.x = blit_w, .y = blit_h, .z = 1 }}};
+                    std::array<vk::Offset3D, 2> dst_offsets{ {
+                            vk::Offset3D{.x = 0, .y = 0, .z = 0 },
+                                vk::Offset3D{.x = blit_w, .y = blit_h, .z = 1 }} };
+
+                    vk::ImageBlit blit_region{
+                        .srcSubresource = vk::ImageSubresourceLayers{
+                                    .aspectMask = vk::ImageAspectFlagBits::eColor,
+                                    .mipLevel = 0,
+                                    .baseArrayLayer = 0,
+                                    .layerCount = 1},
+                        .srcOffsets = src_offsets,
+                        .dstSubresource = vk::ImageSubresourceLayers{
+                                    .aspectMask = vk::ImageAspectFlagBits::eColor,
+                                    .mipLevel = 0,
+                                    .baseArrayLayer = 0,
+                                    .layerCount = 1},
+                        .dstOffsets = dst_offsets,
+                    };
+
+                    cb.blitImage(tex.vk_image(), vk::ImageLayout::eTransferSrcOptimal,
+                            swapchain.current_image(), vk::ImageLayout::eTransferDstOptimal, 1,
+                            &blit_region, vk::Filter::eNearest);
+                };
             });
         }
 
@@ -608,20 +646,21 @@ void test_case_1(graal::queue& q) {
     graal::device dev = q.get_device();
     {
         VIMG(A)
-            VIMG(B)
-            VIMG(C)
-            VIMG(D1)
-            VIMG(D2)
-            VIMG(E)
-            VIMG(F)
-            VIMG(G)
-            VIMG(H)
-            VIMG(I)
-            VIMG(J)
-            VIMG(K)
+        VIMG(B)
+        VIMG(C)
+        VIMG(D1)
+        VIMG(D2)
+        VIMG(E)
+        VIMG(F)
+        VIMG(G)
+        VIMG(H)
+        VIMG(I)
+        VIMG(J)
+        VIMG(K)
 
         {
-            attachment color[] = { attachment{A, attachment_load_op::clear, attachment_store_op::store} };
+            attachment color[] = {
+                    attachment{A, attachment_load_op::clear, attachment_store_op::store}};
             render_pass_desc pass_desc{
                     .color_attachments = color,
             };
@@ -629,11 +668,12 @@ void test_case_1(graal::queue& q) {
             q.render_pass("T0", pass_desc, [&](handler& h) {
                 DRAW(A);
                 return [](vk::RenderPass, vk::CommandBuffer) {};
-                });
+            });
         }
 
         {
-            attachment color[] = { attachment{B, attachment_load_op::clear, attachment_store_op::store} };
+            attachment color[] = {
+                    attachment{B, attachment_load_op::clear, attachment_store_op::store}};
             render_pass_desc pass_desc{
                     .color_attachments = color,
             };
@@ -641,19 +681,20 @@ void test_case_1(graal::queue& q) {
             q.render_pass("T1", pass_desc, [&](handler& h) {
                 DRAW(B);
                 return [](vk::RenderPass, vk::CommandBuffer) {};
-                });
+            });
         }
 
         q.compute_pass("T2", [&](handler& h) {
             COMPUTE_READ(A)
-                COMPUTE_READ(B)
-                COMPUTE_WRITE(D1)
-                COMPUTE_WRITE(D2)
-                return [](vk::CommandBuffer) {};
-            });
+            COMPUTE_READ(B)
+            COMPUTE_WRITE(D1)
+            COMPUTE_WRITE(D2)
+            return [](vk::CommandBuffer) {};
+        });
 
         {
-            attachment color[] = { attachment{C, attachment_load_op::clear, attachment_store_op::store} };
+            attachment color[] = {
+                    attachment{C, attachment_load_op::clear, attachment_store_op::store}};
             render_pass_desc pass_desc{
                     .color_attachments = color,
             };
@@ -661,41 +702,41 @@ void test_case_1(graal::queue& q) {
             q.render_pass("T3", pass_desc, [&](handler& h) {
                 DRAW(C);
                 return [](vk::RenderPass, vk::CommandBuffer) {};
-                });
+            });
         }
 
         q.compute_pass_async("T4", [&](handler& h) {
             COMPUTE_READ(D2)
-                COMPUTE_READ(C)
-                COMPUTE_WRITE(E)
-                return [](vk::CommandBuffer) {};
-            });
+            COMPUTE_READ(C)
+            COMPUTE_WRITE(E)
+            return [](vk::CommandBuffer) {};
+        });
 
         q.compute_pass("T5", [&](handler& h) {
             COMPUTE_READ(D1)
-                COMPUTE_WRITE(F)
-                return [](vk::CommandBuffer) {};
-            });
+            COMPUTE_WRITE(F)
+            return [](vk::CommandBuffer) {};
+        });
 
         q.compute_pass("T6", [&](handler& h) {
             COMPUTE_READ(E)
-                COMPUTE_READ(F)
-                COMPUTE_WRITE(G)
-                return [](vk::CommandBuffer) {};
-            });
+            COMPUTE_READ(F)
+            COMPUTE_WRITE(G)
+            return [](vk::CommandBuffer) {};
+        });
 
         q.compute_pass("T7", [&](handler& h) {
             COMPUTE_READ(G) COMPUTE_WRITE(H) return [](vk::CommandBuffer) {};
-            });
+        });
         q.compute_pass("T8", [&](handler& h) {
             COMPUTE_READ(H) COMPUTE_WRITE(I) return [](vk::CommandBuffer) {};
-            });
+        });
         q.compute_pass("T9", [&](handler& h) {
             COMPUTE_READ(I) COMPUTE_READ(G) COMPUTE_WRITE(J) return [](vk::CommandBuffer) {};
-            });
+        });
         q.compute_pass("T10", [&](handler& h) {
             COMPUTE_READ(J) COMPUTE_WRITE(K) return [](vk::CommandBuffer) {};
-            });
+        });
 
         /*A.discard();
       B.discard();

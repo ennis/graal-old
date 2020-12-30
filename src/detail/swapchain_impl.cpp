@@ -1,5 +1,7 @@
 #include <graal/detail/swapchain_impl.hpp>
+#include <graal/instance.hpp>
 
+#include <fmt/core.h>
 #include <utility>
 
 namespace graal::detail {
@@ -96,11 +98,12 @@ void swapchain_impl::resize(range_2d framebuffer_size, vk::SurfaceKHR surface) {
     auto image_count = caps.surfaceCapabilities.minImageCount + 1;
     if (max_image_count > 0 && image_count > max_image_count) { image_count = max_image_count; }
 
-    const auto queue_indices = device_.get_queue_indices();
-    const auto graphics_queue_family = device_.get_queue_family_by_index(queue_indices.present);
+    const auto queues_info = device_.get_queues_info();
+    const auto graphics_queue_family = queues_info.families[queues_info.indices.present];
     const vk::SharingMode swapchain_image_sharing_mode = vk::SharingMode::eExclusive;
     const uint32_t share_queue_families[] = {graphics_queue_family};
 
+    // FIXME it's not guaranteed that swapchains can be created with TRANSFER_DST images
     const vk::SwapchainCreateInfoKHR create_info{
             .surface = surface,
             .minImageCount = image_count,
@@ -108,7 +111,7 @@ void swapchain_impl::resize(range_2d framebuffer_size, vk::SurfaceKHR surface) {
             .imageColorSpace = swap_format.colorSpace,
             .imageExtent = swap_extent,
             .imageArrayLayers = 1,
-            .imageUsage = vk::ImageUsageFlagBits::eColorAttachment,
+            .imageUsage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferDst,  
             .imageSharingMode = swapchain_image_sharing_mode,
             .queueFamilyIndexCount = 1,
             .pQueueFamilyIndices = share_queue_families,
@@ -129,6 +132,16 @@ void swapchain_impl::resize(range_2d framebuffer_size, vk::SurfaceKHR surface) {
 
     swapchain_ = new_swapchain;
     images_ = vk_device.getSwapchainImagesKHR(swapchain_);
+    for (size_t i = 0; i < images_.size(); ++i) {
+        const auto image_name = fmt::format("swapchain image #{}", i);
+        vk::DebugUtilsObjectNameInfoEXT object_name_info{
+                .objectType = vk::ObjectType::eImage,
+                .objectHandle = (uint64_t)(VkImage) images_[i],
+                .pObjectName = image_name.c_str(),
+        };
+        vk_device.setDebugUtilsObjectNameEXT(object_name_info, vk_default_dynamic_loader);
+    }
+
     format_ = static_cast<image_format>(static_cast<int>(swap_format.format));
     acquire_next_image();
 }

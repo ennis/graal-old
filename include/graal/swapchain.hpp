@@ -35,7 +35,10 @@ public:
 
     [[nodiscard]] uint32_t current_image_index() const noexcept;
 
+
 private:
+    void acquire_next_image();
+
     std::shared_ptr<detail::swapchain_impl> impl_;
 };
 

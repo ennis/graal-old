@@ -3,6 +3,8 @@
 #include <graal/buffer_usage.hpp>
 #include <graal/detail/resource.hpp>
 #include <graal/device.hpp>
+#include <graal/instance.hpp>
+
 #include <memory>
 #include <span>
 #include <stdexcept>
@@ -19,7 +21,8 @@ namespace detail {
 class buffer_impl : public buffer_resource, public virtual_resource {
 public:
     // construct uninitialized from size
-    buffer_impl(device dev, buffer_usage usage, std::size_t byte_size, const buffer_properties& properties);
+    buffer_impl(device dev, buffer_usage usage, std::size_t byte_size,
+            const buffer_properties& properties);
 
     // construct with initial data
     //buffer_impl(device_impl_ptr device, buffer_usage usage, std::size_t byte_size, const buffer_properties& properties, std::span<std::byte> bytes);
@@ -30,8 +33,19 @@ public:
         return byte_size_;
     }
 
+    void set_name(std::string name) {
+        const auto vk_device = device_.get_vk_device();  
+        vk::DebugUtilsObjectNameInfoEXT object_name_info{
+                .objectType = vk::ObjectType::eBuffer,
+                .objectHandle = (uint64_t)(VkBuffer)buffer_,
+                .pObjectName = name.c_str(),
+        };
+        vk_device.setDebugUtilsObjectNameEXT(object_name_info, vk_default_dynamic_loader);
+        resource::set_name(name);
+    }
+
     void bind_memory(vk::Device device, VmaAllocation allocation,
-        const VmaAllocationInfo& allocation_info) override;
+            const VmaAllocationInfo& allocation_info) override;
 
     [[nodiscard]] allocation_requirements get_allocation_requirements(vk::Device device) override;
 
@@ -59,8 +73,8 @@ public:
     /// @brief
     /// @param size
     buffer(device dev, buffer_usage usage, std::size_t size, const buffer_properties& props = {}) :
-        impl_{std::make_shared<detail::buffer_impl>(std::move(dev),
-                usage, size * sizeof(T), props)} {
+        impl_{std::make_shared<detail::buffer_impl>(
+                std::move(dev), usage, size * sizeof(T), props)} {
     }
 
     /*/// @brief

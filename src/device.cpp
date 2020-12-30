@@ -1,11 +1,15 @@
-#include <fmt/format.h>
 #include <graal/device.hpp>
 #include <graal/instance.hpp>
+
+#include <fmt/format.h>
 #include <optional>
 #define VMA_IMPLEMENTATION
 #include <vk_mem_alloc.h>
 
 namespace graal {
+
+vk::DispatchLoaderDynamic vk_default_dynamic_loader;
+
 namespace detail {
 
 namespace {
@@ -198,6 +202,8 @@ void device_impl::create_vk_device_and_queues(vk::SurfaceKHR present_surface) {
     queues_info_.indices.compute = compute_queue_index;
     queues_info_.indices.transfer = transfer_queue_index;
     queues_info_.indices.present = present_queue_index;
+
+    vk_default_dynamic_loader.init(instance_, device_);
 }
 
 device_impl::device_impl(vk::SurfaceKHR present_surface) {

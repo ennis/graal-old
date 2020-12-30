@@ -5,6 +5,10 @@
 
 namespace graal::detail {
 
+void resource::set_name(std::string name) {
+    name_ = std::move(name);
+}
+
 image_resource* resource::as_image() {
     if (!(type_ == resource_type::image || type_ == resource_type::swapchain_image)) {
         return nullptr;
@@ -13,9 +17,7 @@ image_resource* resource::as_image() {
 }
 
 buffer_resource* resource::as_buffer() {
-    if (type_ != resource_type::buffer) {
-        return nullptr;
-    }
+    if (type_ != resource_type::buffer) { return nullptr; }
     return static_cast<buffer_resource*>(this);
 }
 
