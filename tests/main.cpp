@@ -543,11 +543,11 @@ int main() {
     //=======================================================
     queue q{dev};
 
-    test_case_1(q);
-    test_parallel_branches(q);
-    test_aliasing_pipelining_conflicts(q);
+    //test_case_1(q);
+    //test_parallel_branches(q);
+    //test_aliasing_pipelining_conflicts(q);
 
-    load_texture(q, project_root_path / "data/images/El4KUGDU0AAW64U.jpg");
+    auto tex = load_texture(q, project_root_path / "data/images/LEvnRX1.jpg");
 
     auto pp_state = init_pipeline(dev);
 
@@ -602,8 +602,6 @@ int main() {
 
 void draw_frame(graal::queue& q) {
 }
-
-namespace graal {}  // namespace graal
 
 //=============================================================================
 void test_case_1(graal::queue& q) {

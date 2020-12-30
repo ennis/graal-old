@@ -185,19 +185,19 @@ void device_impl::create_vk_device_and_queues(vk::SurfaceKHR present_surface) {
     physical_device_properties_ = phy.properties;
     physical_device_features_ = phy.features;
 
-    queues_[graphics_queue_index] = graphics_queue;
-    queues_[compute_queue_index] = compute_queue;
-    queues_[transfer_queue_index] = transfer_queue;
+    queues_info_.queues[graphics_queue_index] = graphics_queue;
+    queues_info_.queues[compute_queue_index] = compute_queue;
+    queues_info_.queues[transfer_queue_index] = transfer_queue;
 
-    queue_family_indices_[graphics_queue_index] = graphics_queue_family_;
-    queue_family_indices_[compute_queue_index] = compute_queue_family_;
-    queue_family_indices_[transfer_queue_index] = transfer_queue_family_;
-    queue_family_indices_[present_queue_index] = graphics_queue_family_;
+    queues_info_.families[graphics_queue_index] = graphics_queue_family_;
+    queues_info_.families[compute_queue_index] = compute_queue_family_;
+    queues_info_.families[transfer_queue_index] = transfer_queue_family_;
+    queues_info_.families[present_queue_index] = graphics_queue_family_;
 
-    queue_indices_.graphics = graphics_queue_index;
-    queue_indices_.compute = compute_queue_index;
-    queue_indices_.transfer = transfer_queue_index;
-    queue_indices_.present = present_queue_index;
+    queues_info_.indices.graphics = graphics_queue_index;
+    queues_info_.indices.compute = compute_queue_index;
+    queues_info_.indices.transfer = transfer_queue_index;
+    queues_info_.indices.present = present_queue_index;
 }
 
 device_impl::device_impl(vk::SurfaceKHR present_surface) {

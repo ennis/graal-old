@@ -4,7 +4,9 @@
 #include <vulkan/vulkan.hpp>
 
 namespace graal::detail {
-struct command_buffer_pool {
+struct command_buffer_pool 
+{
+    uint32_t queue_family_index;
     vk::CommandPool command_pool;
     recycler<vk::CommandBuffer> free_cbs;
     std::vector<vk::CommandBuffer> used_cbs;

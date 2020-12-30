@@ -40,7 +40,7 @@ graal::image_2d load_texture(graal::queue& queue, const std::filesystem::path& p
                 break;
         }
     } else {
-        throw std::runtime_error{"unsupported component type"};
+        throw std::runtime_error{"unsupported channel type"};
     }
 
     const auto mip_levels = mipmaps ? graal::get_mip_level_count(spec.width, spec.height) : 1;
@@ -51,15 +51,16 @@ graal::image_2d load_texture(graal::queue& queue, const std::filesystem::path& p
             graal::image_properties{.mip_levels = mip_levels}};
     texture.set_name(path.string());
 
-    const auto buffer_px_stride = bpp;
-    const auto buffer_row_length = buffer_px_stride * spec.width;
-    const auto buffer_image_height = spec.height;
+    const uint32_t buffer_px_stride = bpp;
+    const uint32_t buffer_row_length = spec.width;
+    const uint32_t image_width = spec.width;
+    const uint32_t image_height = spec.height;
 
     // get a staging buffer
     vk::Buffer staging_buffer;
     vk::DeviceSize staging_buffer_offset;
     void* staging_mem =
-            queue.get_staging_buffer(16, buffer_row_length * buffer_image_height, staging_buffer, staging_buffer_offset);
+            queue.get_staging_buffer(16, buffer_row_length * image_height * buffer_px_stride, staging_buffer, staging_buffer_offset);
 
     // read into the staging buffer
     image_input->read_image(0, 0, 0, spec.nchannels - 1, fmt_tydesc, staging_mem, buffer_px_stride);
@@ -75,7 +76,7 @@ graal::image_2d load_texture(graal::queue& queue, const std::filesystem::path& p
             vk::BufferImageCopy region{
                 .bufferOffset = 0,
                     .bufferRowLength = buffer_row_length,
-                    .bufferImageHeight = (uint32_t) spec.height,
+                    .bufferImageHeight = image_height,
                     .imageSubresource =
                             vk::ImageSubresourceLayers{
                                     .aspectMask = vk::ImageAspectFlagBits::eColor,
@@ -83,8 +84,8 @@ graal::image_2d load_texture(graal::queue& queue, const std::filesystem::path& p
                                     .baseArrayLayer = 0,
                                     .layerCount = 1},
                     .imageOffset = vk::Offset3D{.x = 0, .y = 0, .z = 0},
-                    .imageExtent = vk::Extent3D{.width = (uint32_t) spec.width,
-                            .height = (uint32_t) spec.height,
+                    .imageExtent = vk::Extent3D{.width = image_width,
+                            .height = image_height,
                             .depth = 1}};
 
             cb.copyBufferToImage(staging_buffer, texture.vk_image(),
