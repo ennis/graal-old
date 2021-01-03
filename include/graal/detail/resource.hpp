@@ -12,6 +12,55 @@
 
 namespace graal::detail {
 
+    /// @brief Represents an "owned" handle to a vulkan object.
+    /// The object/scope that has a vk_handle owns the object and is responsible for its deletion.
+    /// The object is not automatically deleted, as it would need a backpointer to the device or instance.
+    /// Instead, the owner must call `release` and delete the object manually, or transfer ownership to another
+    /// object or function that takes charge of the deletion.
+    /// The destructor of `vk_handle` asserts if the handle is not nullptr.
+    template <typename T>
+    class vk_handle {
+    public:
+        constexpr vk_handle() noexcept : handle_{ nullptr } {}
+        constexpr vk_handle(std::nullptr_t) noexcept : handle_{ nullptr } {}
+        constexpr explicit vk_handle(T handle) noexcept : handle_{ handle } {}
+
+        ~vk_handle() noexcept { assert(!handle && "vulkan handle was not null"); }
+
+        vk_handle(const vk_handle<T>&) = delete;
+        vk_handle<T>& operator=(const vk_handle<T>&) = delete;
+
+        vk_handle(vk_handle<T>&&) noexcept = default;
+        vk_handle<T>& operator=(const vk_handle<T>&) noexcept = default;
+
+        [[nodiscard]] T release() noexcept {
+            auto h = handle_;
+            handle_ = nullptr;
+            return h;
+        }
+
+        [[nodiscard]] T get() const noexcept { return handle_; }
+        [[nodiscard]] explicit operator bool() const noexcept { return handle_ != nullptr; }
+        
+    
+    private:
+        T handle_;
+    };
+
+    template <typename T>
+    class vk_handle_vector
+    {
+    public:
+        using value_type = T;
+        
+        void push_back(vk_handle<T> );
+    
+        
+    private:
+        std::vector<T> handles_;
+    };
+
+
 /// @brief Flags common to all resource types.
 enum class allocation_flags {
     host_visible = (1 << 0),  ///< Resource can be mapped in host memory.
@@ -59,6 +108,8 @@ struct resource_last_access_info
         for (auto& r : readers) { r = 0; }
     }
 };
+
+
 
 /// @brief Base class for tracked resources.
 class resource 

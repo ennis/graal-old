@@ -592,6 +592,18 @@ int main() {
                 const int32_t blit_w = std::min((int)tex.width(), display_w);
                 const int32_t blit_h = std::min((int)tex.height(), display_h);
 
+                // FIXME in the callback, the swapchain is already pointing to the next image!
+                // between the execution of the handler and the execution of the command callback,
+                // the resource that `swapchain` represents has changed.
+                // This is a bit surprising.
+                // Solutions:
+                // - get VkImage manually in the handler
+                // - introduce proper "swapchain image" resources
+                // - end the current batch before calling "acquire_next_image" 
+                //      - reasonable, as a present operation usually coincides with the "end of the frame".
+
+                vk::Image swapchain_image = swapchain.current_image();
+
                 return [=](vk::RenderPass, vk::CommandBuffer cb) {
 
 
@@ -618,7 +630,7 @@ int main() {
                     };
 
                     cb.blitImage(tex.vk_image(), vk::ImageLayout::eTransferSrcOptimal,
-                            swapchain.current_image(), vk::ImageLayout::eTransferDstOptimal, 1,
+                        swapchain_image, vk::ImageLayout::eTransferDstOptimal, 1,
                             &blit_region, vk::Filter::eNearest);
                 };
             });

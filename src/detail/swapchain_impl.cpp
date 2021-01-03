@@ -158,6 +158,10 @@ void swapchain_impl::acquire_next_image() {
 
     current_image_ = image_index;
     image_ = images_[image_index];
+    // reset resource state
+    state.layout = vk::ImageLayout::eUndefined;
+    state.clear_readers();
+    state.writer.serial = 0;
     if (auto old_semaphore = std::exchange(state.wait_semaphore, image_available)) {
         // FIXME is that correct? what if the semaphore is signalled?
         device_.recycle_binary_semaphore(old_semaphore);

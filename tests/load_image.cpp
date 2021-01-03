@@ -63,7 +63,7 @@ graal::image_2d load_texture(graal::queue& queue, const std::filesystem::path& p
             queue.get_staging_buffer(16, buffer_row_length * image_height * buffer_px_stride, staging_buffer, staging_buffer_offset);
 
     // read into the staging buffer
-    image_input->read_image(0, 0, 0, spec.nchannels - 1, fmt_tydesc, staging_mem, buffer_px_stride);
+    image_input->read_image(0, 0, 0, spec.nchannels, fmt_tydesc, staging_mem, buffer_px_stride);
 
     queue.compute_pass("load_image", [=](graal::handler& h) {
 
