@@ -1033,7 +1033,29 @@ Why does SYCL have wrappers?
 	  		- lifetime is unclear
 - problem: build barriers after DAG building
 	- need to "replay" the DAG (barriers need tracking of the current readers and writers) or store a vector of readers and writers per access
-	- 
+
+# No reordering
+The tasks are submitted to the queue in the order they appear in the API.
+This can lead to suboptimal scheduling.
+
+Problems with reordering: 
+- reordering makes things more complicated in the submission backend
+- 
+
+# Direct3D 12 port?
+- resources: same, but don't allocate resource in advance
+- VMA => D3D12 memory allocator (or just use commited resources for now)
+- resource state => replace layout + access flags with resource state transitions
+- remove render passes
+- 
+
+# Rust port?
+
+# To fix:
+- remove VkRenderPass creation responsibility from queue
+- maybe rethink swapchain access?
+- single command buffer per submission (except when requested, for parallel command recording)
+- reclaim resources
 
 ## Log
 28/11 : pipeline state tracking and "queue classes". Can deduce execution and memory dependencies.

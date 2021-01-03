@@ -402,7 +402,7 @@ public:
     void enqueue_pending_tasks();
     void present(swapchain swapchain);
 
-    void wait_for_task(submission_number snn);
+    void wait_for_batch();
 
     const task* get_unsubmitted_task(uint64_t sequence_number) const noexcept;
     task* get_unsubmitted_task(uint64_t sequence_number) noexcept {
@@ -508,7 +508,8 @@ queue_impl::queue_impl(device device, const queue_properties& props) :
 }
 
 queue_impl::~queue_impl() {
-    auto vk_device = device_.get_vk_device();
+    const auto vk_device = device_.get_vk_device();
+    vk_device.waitIdle();
     for (size_t i = 0; i < max_queues; ++i) {
         vk_device.destroySemaphore(timelines_[i]);
     }
@@ -530,7 +531,7 @@ command_buffer_pool queue_impl::get_command_buffer_pool(uint32_t queue) {
     command_buffer_pool cbp;
 
     if (!cb_pools_.fetch_if(
-                cbp, [=](auto&& cbp) { return cbp.queue_family_index = queue_family_index; })) {
+                cbp, [=](const auto& cbp) { return cbp.queue_family_index == queue_family_index; })) {
         // TODO other queues?
         vk::CommandPoolCreateInfo create_info{.flags = vk::CommandPoolCreateFlagBits::eTransient,
                 .queueFamilyIndex = queue_family_index};
@@ -587,11 +588,12 @@ struct queue_submission {
     per_queue_wait_dst_stages wait_dst_stages{};
     submission_number first_snn;
     submission_number signal_snn;
-    std::vector<vk::Semaphore> wait_binary_semaphores;
-    std::vector<vk::Semaphore> signal_binary_semaphores;
-    vk::Semaphore render_finished;
+    std::vector<vk_handle<vk::Semaphore>> wait_binary_semaphores;
+    std::vector<vk_handle<vk::Semaphore>> signal_binary_semaphores;
+    vk_handle<vk::Semaphore> render_finished;
     std::vector<vk::SwapchainKHR> swapchains;
-    std::vector<uint32_t> swpachain_image_indices;
+    std::vector<uint32_t> swapchain_image_indices;
+    vk::CommandBuffer command_buffer;
 
     size_t cb_offset = 0;
     size_t cb_count = 0;
@@ -600,15 +602,21 @@ struct queue_submission {
         return cb_count == 0 && signal_binary_semaphores.empty() && !render_finished;
     }
 
-    void submit(vk::Queue queue, std::span<vk::CommandBuffer> command_buffers,
-            std::span<vk::Semaphore> timelines, per_queue_wait_serials& out_signals)
+    void submit(
+        vk::Queue queue, 
+        std::span<vk::Semaphore> timelines, 
+        per_queue_wait_serials& out_signals,
+        std::vector<vk::Semaphore> pending_semaphores)
     {
         const auto queue_index = signal_snn.queue;
         std::vector<vk::Semaphore> signal_semaphores;
         signal_semaphores.push_back(timelines[queue_index]);
         signal_semaphores.insert(signal_semaphores.end(), signal_binary_semaphores.begin(),
                 signal_binary_semaphores.end());
-        if (render_finished) { signal_semaphores.push_back(render_finished); }
+        if (render_finished) { 
+            signal_semaphores.push_back(render_finished); 
+            pending_semaphores.push_back(render_finished);
+        }
 
         std::vector<vk::Semaphore> wait_semaphores;
         std::vector<vk::PipelineStageFlags> wait_semaphore_dst_stages;
@@ -643,8 +651,8 @@ struct queue_submission {
                 .waitSemaphoreCount = (uint32_t) wait_semaphores.size(),
                 .pWaitSemaphores = wait_semaphores.data(),
                 .pWaitDstStageMask = wait_semaphore_dst_stages.data(),
-                .commandBufferCount = (uint32_t) cb_count,
-                .pCommandBuffers = command_buffers.data() + cb_offset,
+                .commandBufferCount = 1,
+                .pCommandBuffers = &command_buffer,
                 .signalSemaphoreCount = (uint32_t) signal_semaphores.size(),
                 .pSignalSemaphores = signal_semaphores.data()};
 
@@ -658,7 +666,7 @@ struct queue_submission {
                     .pWaitSemaphores = &render_finished,
                     .swapchainCount = (uint32_t) swapchains.size(),
                     .pSwapchains = swapchains.data(),
-                    .pImageIndices = swpachain_image_indices.data()};
+                    .pImageIndices = swapchain_image_indices.data()};
 
             queue.presentKHR(present_info);
         }
@@ -734,7 +742,7 @@ struct submission_builder {
         // end the batch with a present (how considerate!)
         qs.render_finished = std::move(render_finished);
         qs.swapchains = std::move(swapchains);
-        qs.swpachain_image_indices = std::move(swpachain_image_indices);
+        qs.swapchain_image_indices = std::move(swpachain_image_indices);
         end_batch(queue);
     }
 
@@ -1171,6 +1179,9 @@ void queue_impl::enqueue_pending_tasks() {
     // --- short-circuit if no tasks
     if (tasks_.empty()) { return; }
 
+    // --- await previous batches
+    wait_for_batch();
+
     // dump
     fmt::print(" === Tasks: === \n");
     for (const auto& t : tasks_) {
@@ -1246,8 +1257,17 @@ void queue_impl::enqueue_pending_tasks() {
     }
 
     std::array<std::optional<command_buffer_pool>, max_queues> cb_pools{};
-    std::vector<vk::CommandBuffer> cbs;
-    cbs.resize(ctx.submission_builder.cb_count);
+
+    //---------------------------------------------------
+    // allocate command buffers for each submission
+    for (auto& s : ctx.submission_builder.submits) {
+        const auto queue = s.signal_snn.queue;
+        if (!cb_pools[queue]) {
+            cb_pools[queue] = get_command_buffer_pool(queue);
+        }
+        s.command_buffer = cb_pools[queue]->fetch_command_buffer(vk_device);
+        s.command_buffer.begin(vk::CommandBufferBeginInfo{});
+    }
 
     //---------------------------------------------------
     // fill command buffers
@@ -1256,12 +1276,7 @@ void queue_impl::enqueue_pending_tasks() {
         auto& t = tasks_[i];
         auto& batch = ctx.submission_builder.submits[t.submit_batch_index];
 
-        if (!cb_pools[t.snn.queue]) {
-            cb_pools[t.snn.queue] = get_command_buffer_pool(t.snn.queue);
-        }
-
-        vk::CommandBuffer cb = cb_pools[t.snn.queue]->fetch_command_buffer(vk_device);
-        cb.begin(vk::CommandBufferBeginInfo{});
+        vk::CommandBuffer cb = batch.command_buffer;
         if (t.needs_barrier()) {
             const auto src_stage_mask =
                     t.src_stage_mask ? t.src_stage_mask : vk::PipelineStageFlagBits::eTopOfPipe;
@@ -1279,17 +1294,17 @@ void queue_impl::enqueue_pending_tasks() {
         } else if (t.type() == task_type::compute_pass) {
             if (t.d.u.compute.callback) t.d.u.compute.callback(cb);
         }
+    }
 
-        cb.end();
-
-        cbs[batch.cb_offset + t.submit_batch_cb_index] = cb;
+    for (auto& s : ctx.submission_builder.submits) {
+        s.command_buffer.end();
     }
 
     //---------------------------------------------------
     // queue submission
     per_queue_wait_serials signals{};
     for (auto& b : ctx.submission_builder.submits) {
-        b.submit(qinfo_.queues[b.signal_snn.queue], cbs, timelines_, signals);
+        b.submit(qinfo_.queues[b.signal_snn.queue], timelines_, signals);
     }
 
     //---------------------------------------------------
@@ -1332,36 +1347,32 @@ void queue_impl::present(swapchain swapchain) {
     swapchain.acquire_next_image();
 }
 
-void queue_impl::wait_for_task(submission_number snn) {
-    assert(snn.serial <= batch_start_serial_);
-
-    const auto vk_device = device_.get_vk_device();
-    const uint64_t values[] = {snn.serial};
-    const vk::SemaphoreWaitInfo wait_info{
-            .semaphoreCount = 1, .pSemaphores = &timelines_[snn.queue], .pValues = values};
-    vk_device.waitSemaphores(wait_info, 10000000000);  // 10sec batch timeout
-
-    while (!in_flight_batches_.empty()) {
-        auto& b = in_flight_batches_.front();
-        bool finished = true;
-        for (size_t i = 0; i < max_queues; ++i) {
-            if (auto sn = b.end_serials[i]) {
-                auto completed_serial = vk_device.getSemaphoreCounterValue(timelines_[i]);
-                if (sn > completed_serial) {
-                    finished = false;
-                    break;
-                }
-            }
-        }
-        if (!finished) break;
-
-        for (auto& cbp : b.cb_pools) {
-            cbp.reset(vk_device);
-            cb_pools_.recycle(std::move(cbp));
-        }
-
-        in_flight_batches_.pop_front();
+void queue_impl::wait_for_batch() 
+{
+    //assert(snn.serial <= batch_start_serial_);
+    if (in_flight_batches_.size() < 2) {
+        return;
     }
+
+    // wait for the first batch
+    const auto vk_device = device_.get_vk_device();
+    auto& b = in_flight_batches_.front();
+
+    const vk::SemaphoreWaitInfo wait_info{
+            .semaphoreCount = max_queues, 
+            .pSemaphores = timelines_, 
+            .pValues = b.end_serials.data()};
+    vk_device.waitSemaphores(wait_info, 10000000000);  // 10sec batch timeout
+    
+    for (auto& cbp : b.cb_pools) {
+        cbp.reset(vk_device);
+        cb_pools_.recycle(std::move(cbp));
+        for (auto s : b.semaphores) {
+            device_.recycle_binary_semaphore(s);
+        }
+    }
+
+    in_flight_batches_.pop_front();
 }
 
 /// @brief synchronizes two tasks
