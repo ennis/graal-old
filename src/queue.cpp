@@ -453,7 +453,7 @@ private:
                     t.snn.queue = qinfo_.indices.graphics;
                 }
                 break;
-            case task_type::present: t.snn.queue = qinfo_.indices.compute; break;
+            case task_type::present: t.snn.queue = qinfo_.indices.present; break;
         }
         t.snn.serial = last_serial_;  // temporary SNN for DAG creation
         if (!name.empty()) {

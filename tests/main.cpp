@@ -547,7 +547,7 @@ int main() {
     //test_parallel_branches(q);
     //test_aliasing_pipelining_conflicts(q);
 
-    auto tex = load_texture(q, project_root_path / "data/images/LEvnRX1.jpg", graal::image_usage::sampled | graal::image_usage::storage | graal::image_usage::transfer_src);
+    auto tex = load_texture(q, project_root_path / "data/images/El4KUGDU0AAW64U.jpg", graal::image_usage::sampled | graal::image_usage::storage | graal::image_usage::transfer_src);
 
     auto pp_state = init_pipeline(dev);
 
