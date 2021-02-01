@@ -206,7 +206,8 @@ void device_impl::create_vk_device_and_queues(vk::SurfaceKHR present_surface) {
     vk_default_dynamic_loader.init(instance_, device_);
 }
 
-device_impl::device_impl(vk::SurfaceKHR present_surface) {
+device_impl::device_impl(vk::SurfaceKHR present_surface) 
+{
     instance_ = get_vulkan_instance();
     create_vk_device_and_queues(present_surface);
 
@@ -238,17 +239,18 @@ device_impl::~device_impl() {
     instance_.destroy();
 }
 
-[[nodiscard]] vk::Semaphore device_impl::create_binary_semaphore() {
-    vk::Semaphore sem;
-    if (!free_semaphores_.fetch(sem)) {
+[[nodiscard]] handle<vk::Semaphore> device_impl::create_binary_semaphore() {
+
+    if (free_semaphores_.empty()) {
         vk::SemaphoreCreateInfo sci;
-        sem = device_.createSemaphore(sci);
+        auto sem = device_.createSemaphore(sci);
+        return handle{ sem };
     }
-    return sem;
+    return free_semaphores_.pop_back();
 }
 
-void device_impl::recycle_binary_semaphore(vk::Semaphore semaphore) {
-    free_semaphores_.recycle(std::move(semaphore));
+void device_impl::recycle_binary_semaphore(handle<vk::Semaphore> semaphore) {
+    free_semaphores_.push_back(std::move(semaphore));
 }
 
 }  // namespace detail

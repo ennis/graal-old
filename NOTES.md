@@ -558,6 +558,7 @@ we must add weird unique semantics on top of shared_ptr. Plus, if shared semanti
 then must do `shared_ptr<image<>>`, which is a double pointer indirection (`shared_ptr<shared_ptr<image_impl>>`) 
 So, no.
 
+
 ## Thread safety for external reference counting?
 
 ## Automatic pipeline barriers / layout transitions
@@ -832,6 +833,26 @@ It only serves to enable `height` or `depth` if it's 2D or 3D. It doesn't provid
 It might be useful when binding the image to a descriptor, to statically check that the image has the correct dimensions, but it's not there yet. 
 And there will probably be other checks that need to be made at runtime anyway.
 
+# Management of vulkan handles by resources
+The handle to objects are stored in the base class `image_resource` or `buffer_resource` or `resource` (access semaphores), 
+but it's the responsibility of the derived class `image_impl` to do the cleanup?
+-> The main issue is that there's a base `resource` class, but is doesn't represent ownership of the resource (only the derived class does).
+Idea: replace inheritance with composition:
+- image_impl owns a `shared_ptr<resource>`
+- swapchain_impl owns one resource per image
+
+## Getting rid of swapchain resources?
+Swapchain images are annoying because we don't really own them once they are passed to presentation.
+Also, they need binary semaphores for synchronization. 
+Some notes:
+- they don't need to be reclaimed since they are owned by the swapchain
+- they can be used like regular images in the pipeline, so it must be tracked like a `resource`
+- don't expose swapchain images, only provide accessors to swapchains
+TODO:
+- augment image_impl with a way to create references to external images
+	-> image_resource may or may not own the resource depending on a flag 
+
+
 
 # Issue: granularity of access tracking
 Until now, we assumed that we could track the resource states at the granularity of the resource, that is, track the state of the whole image,
@@ -844,6 +865,8 @@ emitting a memory barrier for the whole buffer instead of just the accessed regi
 Unfortunately, keeping track of accesses at a smaller granularity seems more complex. 
 For images, we need to maintain a different state for each subresource.
 For buffers, we need to maintain a dynamic list of ranges for each state.
+
+
 
 ## Access tracking in existing render graph systems
 [Granite](https://github.com/Themaister/Granite/blob/master/renderer/render_graph.hpp) doesn't track accesses at subresource granularity.
@@ -1006,9 +1029,79 @@ Cons:
 - no pimpl (but that's already the case)
 - no direct constructors (must use a factory function to create the pointer)
 
-
 Why does SYCL have wrappers?
 - is it for pImpl?
+SYCL inspired wrappers. Object-like syntax (`.method`), but shared-ptr like semantics, except that there's no null state.
+Remove and use `shared_ptr<image>` directly?
+
+Don't use pointers at all?
+- allow creation of images on the stack
+- no shared semantics
+- unique_ptr or shared_ptr as needed by the user
+- Option A: resources must be alive at least as long as the current batch
+	- annoying to ensure, error-prone
+- Option B: resources must only be alive when creating a pass, can dropped immediately after
+	- when using a resource in a queue, ownership is transferred to the queue
+		- problem: the queue will eventually finish using the image, but this does not mean that the image should be deleted
+			- ownership should be re-transferred to the image
+			- 
+	- if the resource object doesn't have ownership, destructor does nothing
+	- otherwise, it is automatically released
+- Option C:
+	- destructors actually destroy the resource
+		- they wait for the queue to finish using it
+	- however, it's possible to explicitly transfer ownership of a resource to the queue
+		- `queue.discard(resource)`: the queue takes on the responsibility of destroying the resource once the GPU finishes using it
+	- the resource object itself has very little state
+		- a reference to the queue that is using it, if any
+		- the handle
+		- the create info
+	- tracking information is moved into the queue
+		- map VK handle to index (handle->index)
+		- stored in vectors
+	- basically, decouple the resource classes from the queue
+		- the user can have the queue track its own VkImage/VkBuffers
+
+	- registering a resource
+		- `queue_impl.add_resource_dependency(task, VkImage/VkBuffer, ...)`
+			- lookup index of resource (VkImage->size_t)
+			- lookup index of temporary (VkImage->size_t)
+			- implicitly registers the resource to the queue
+	- unregistering a resource
+		- `queue.unregister_resource(VkImage)`
+			- will wait for the GPU to finish using the resource, and 
+	- transferring ownership to the queue:
+		- `queue.discard(VkImage/VkBuffer)`
+		- resource will be automatically freed when the GPU is finished with it
+	- Problem: lots of map lookups (VkImage->...)
+		- maybe cache the resource index?
+	- All of this is only so that resource tracking can work on arbitrary handles
+		- it is worth it?
+			- maybe: users don't have to buy into the resources classes if they want to manage their objects in some other way
+				- in which cases would it be more convenient for the user to have raw vulkan handles instead of our wrappers?
+					- our wrappers also store a bunch of information like width, height, format, etc. format requied for image barriers.
+					- also the allocation, which is useless for external images.
+
+## Time for a survey: resource classes in frameworks that automatically handle synchronization
+Look for:
+- shared VS unique semantics
+- can work with raw handles
+
+- [Acid](https://github.com/EQMG/Acid)
+	- shared_ptr, no raw handles, synchro unknown
+- [Diligent engine]()
+	- ref-counted ptr, state kept in resource
+- [falcor](https://github.com/NVIDIAGameWorks/Falcor/blob/master/Source/Falcor/Core/API/Texture.h)
+	- shared_ptr
+- [bsf](https://github.com/GameFoundry/bsf/tree/master/Source/Plugins/bsfVulkanRenderAPI)
+	- tracking info in resource
+	- shared_ptr semantics
+
+## What is the absolute minimum we need to track for automatic barriers?
+- handle, obviously
+- format of images (for image memory barriers: we need the aspect mask that corresponds to the format)
+	- specify the aspect mask in the accessor instead?
+- buffers: nothing?
 
 
 # Formalize the submission problem
@@ -1056,6 +1149,12 @@ Problems with reordering:
 - maybe rethink swapchain access?
 - single command buffer per submission (except when requested, for parallel command recording)
 - reclaim resources
+
+# Unify queue and device
+- no reason to have both, there's only one device, and there's only one "queue" (which does *not* correspond to a vulkan queue)
+- rename to "context" or something
+- create a device without a queue?
+	- possible, use "device" only as a convenience class to create vulkan queues
 
 ## Log
 28/11 : pipeline state tracking and "queue classes". Can deduce execution and memory dependencies.

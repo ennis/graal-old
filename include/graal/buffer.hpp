@@ -16,50 +16,6 @@ struct buffer_properties {
     vk::MemoryPropertyFlags preferred_flags = vk::MemoryPropertyFlagBits::eDeviceLocal;
 };
 
-namespace detail {
-
-class buffer_impl : public buffer_resource, public virtual_resource {
-public:
-    // construct uninitialized from size
-    buffer_impl(device dev, buffer_usage usage, std::size_t byte_size,
-            const buffer_properties& properties);
-
-    // construct with initial data
-    //buffer_impl(device_impl_ptr device, buffer_usage usage, std::size_t byte_size, const buffer_properties& properties, std::span<std::byte> bytes);
-
-    ~buffer_impl();
-
-    [[nodiscard]] std::size_t byte_size() const noexcept {
-        return byte_size_;
-    }
-
-    void set_name(std::string name) {
-        const auto vk_device = device_.get_vk_device();  
-        vk::DebugUtilsObjectNameInfoEXT object_name_info{
-                .objectType = vk::ObjectType::eBuffer,
-                .objectHandle = (uint64_t)(VkBuffer)buffer_,
-                .pObjectName = name.c_str(),
-        };
-        vk_device.setDebugUtilsObjectNameEXT(object_name_info, vk_default_dynamic_loader);
-        resource::set_name(name);
-    }
-
-    void bind_memory(vk::Device device, VmaAllocation allocation,
-            const VmaAllocationInfo& allocation_info) override;
-
-    [[nodiscard]] allocation_requirements get_allocation_requirements(vk::Device device) override;
-
-private:
-    device device_;
-    std::size_t byte_size_ = -1;
-    bool own_allocation_ = false;
-    VmaAllocation allocation_ = nullptr;
-    VmaAllocationInfo allocation_info_{};
-    buffer_properties props_{};
-    buffer_usage usage_{};
-};
-
-}  // namespace detail
 
 /// @brief
 /// @tparam T

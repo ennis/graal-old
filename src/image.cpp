@@ -27,32 +27,62 @@ vk::Image create_image(vk::Device vk_device, image_type type, image_usage usage,
 
 }  // namespace
 
-image_impl::image_impl(device dev, image_type type, image_usage usage,
-        image_format format, range<3> size, const image_properties& props) :
-    image_resource{resource_type::image,
-            create_image(dev.get_vk_device(), type, usage, format, size, props), format},
-    device_{std::move(dev)}, type_{type}, usage_{usage}, size_{size}, props_{props} {
+image_resource::image_resource(device dev, image_type type, image_usage usage, image_format format,
+        range<3> size, const image_properties& props) :
+    resource{std::move(dev), resource_type::image},
+    owned_{true} {
+    const auto vkd = get_device().get_handle();
+    image_ = create_image(vkd, type, usage, format, size, props);
+    mem_preferred_flags = props.preferred_flags;
+    mem_required_flags = props.required_flags;
 }
 
-image_impl::~image_impl() {
-    if (image_) { device_.get_vk_device().destroyImage(image_); }
+image_resource::image_resource(
+    device dev,
+    handle<vk::Image> image,
+    handle<VmaAllocation> allocation,
+    const VmaAllocationInfo& alloc_info) : 
+    resource{ std::move(dev), resource_type::image },
+    owned_{ false },
+    image_{image.release()},
+    allocation_{allocation.release()},
+    allocation_info_{alloc_info}
+{}
+
+image_resource::~image_resource() {
+    if (owned_ && image_) {
+        const auto vkd = get_device().get_handle();
+        vkd.waitIdle();
+        vkd.destroyImage(image_);
+    }
 }
 
 /// @brief See resource::bind_memory
-void image_impl::bind_memory(vk::Device device, VmaAllocation allocation,
-        const VmaAllocationInfo& allocation_info)
-{
+void image_resource::bind_memory(
+        VmaAllocation allocation, const VmaAllocationInfo& allocation_info) {
     allocation_ = allocation;
     allocation_info_ = allocation_info;
-    device.bindImageMemory(image_, allocation_info.deviceMemory, allocation_info.offset);
-    allocated = true;
+    const auto vkd = get_device().get_handle();
+    vkBindImageMemory(vkd, image_, allocation_info.deviceMemory, allocation_info.offset);
 }
 
-allocation_requirements image_impl::get_allocation_requirements(vk::Device device) {
-    const vk::MemoryRequirements mem_req = device.getImageMemoryRequirements(image_);
+allocation_requirements image_resource::get_allocation_requirements() {
+    const auto vkd = get_device().get_handle();
+    const vk::MemoryRequirements mem_req = vkd.getImageMemoryRequirements(image_);
     return allocation_requirements{.memreq = mem_req,
-            .required_flags = props_.required_flags,
-            .preferred_flags = props_.preferred_flags};
+            .required_flags = mem_required_flags,
+            .preferred_flags = mem_preferred_flags};
+}
+
+void image_resource::set_name(std::string name) {
+    const auto vkd = get_device().get_handle();
+    vk::DebugUtilsObjectNameInfoEXT object_name_info{
+         .objectType = vk::ObjectType::eImage,
+         .objectHandle = (uint64_t)(VkImage)image_,
+         .pObjectName = name.c_str(),
+    };
+    vkd.setDebugUtilsObjectNameEXT(object_name_info, vk_default_dynamic_loader);
+    resource::set_name(name);
 }
 
 }  // namespace detail

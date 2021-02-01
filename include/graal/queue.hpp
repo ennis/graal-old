@@ -31,8 +31,8 @@ struct task;
 /// @brief Command handler.
 // TODO remove this class and expose submit_task directly instead?
 class handler {
-    friend class queue;
-    friend class detail::queue_impl;
+    friend class context;
+    friend class detail::context_impl;
 
     template<image_type, image_usage, access_mode, bool>
     friend class image_accessor;
@@ -65,7 +65,7 @@ public:
     }
 
 private:
-    handler(detail::queue_impl& queue, detail::task& task) : queue_{queue}, task_{task} {
+    handler(detail::context_impl& context, detail::task& task) : context_{ context}, task_{task} {
     }
 
     // Called by buffer accessors to register an use of a buffer in a task
@@ -78,39 +78,16 @@ private:
             vk::AccessFlags access_mask, vk::PipelineStageFlags input_stage,
             vk::PipelineStageFlags output_stage, vk::ImageLayout layout) const;
 
-    detail::queue_impl& queue_;
+    detail::context_impl& context_;
     detail::task& task_;
 };
 
 //-----------------------------------------------------------------------------
 
-/*template <typename T>
-class staging_buffer
-{
-    friend class detail::queue_impl;
-public:
-    [[nodiscard]] std::span<T> span() noexcept { return std::span{data_, size_}; }
-
-private:
-    staging_buffer(vk::Buffer buffer, vk::DeviceSize offset, T* data, size_t size)
-    {
-        
-    }
-
-    vk::Buffer buffer_;
-    vk::DeviceSize offset_;
-    T* data_;
-    size_t size_;   // in number of T elements
-};*/
-
-struct queue_properties {
-    int max_batches_in_flight = 1;
-};
-
 /// @brief
-class queue {
+class context {
 public:
-    queue(device& dev, const queue_properties& props = {});
+    context(device& dev);
 
     /// @brief Schedule a render pass
     /// @tparam F
@@ -205,7 +182,7 @@ private:
     [[nodiscard]] detail::task& create_compute_pass_task(
             std::string_view name, bool async) noexcept;
 
-    std::shared_ptr<detail::queue_impl> impl_;
+    std::shared_ptr<detail::context_impl> impl_;
 };
 
 }  // namespace graal

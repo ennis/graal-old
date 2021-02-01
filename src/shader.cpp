@@ -300,7 +300,7 @@ EShLanguage shader_stage_to_sh_language(shader_stage stage) {
   // --- generate reflection data ---
 
   // --- create shader module ---
-  auto                       vk_device = device.get_vk_device();
+  auto                       vk_device = device.get_handle();
   vk::ShaderModuleCreateInfo smci{.codeSize = spv.size() * sizeof(uint32_t),
                                   .pCode = spv.data()};
   auto                       m = vk_device.createShaderModule(smci);

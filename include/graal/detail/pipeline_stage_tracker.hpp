@@ -207,7 +207,7 @@ struct pipeline_stage_tracker {
     }
 };
 
-enum class resource_state {
+/*enum class resource_state {
     indirect_command_read = (1<<0),
     vertex_buffer = (1 << 1),
     index_buffer = (1 << 2),
@@ -219,7 +219,7 @@ enum class resource_state {
     shader_write = (1 << 8),
 };
 
-GRAAL_BITMASK(resource_state)
+GRAAL_BITMASK(resource_state)*/
 
 /*constexpr inline void get_resource_state_barriers(
     resource_state state,

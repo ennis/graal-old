@@ -16,6 +16,7 @@ set(HEADERS
     
     "include/graal/detail/dependent_false.hpp"
     "include/graal/detail/named_object.hpp"
+    "include/graal/detail/plf_colony.h"
     "include/graal/detail/resource.hpp"
     "include/graal/detail/task.hpp"
     "include/graal/queue.hpp"
@@ -44,7 +45,7 @@ set(HEADERS
     "include/graal/detail/sequence_number.hpp"
     "include/graal/detail/command_buffer_pool.hpp" 
     "include/graal/queue_class.hpp" 
-    "include/graal/render_pass.hpp" "include/graal/detail/staging_pool.hpp" "include/graal/detail/pipeline_stage_tracker.hpp")
+    "include/graal/render_pass.hpp" "include/graal/detail/staging_pool.hpp" "include/graal/detail/pipeline_stage_tracker.hpp" "include/graal/detail/vk_handle.hpp")
 
 set(SOURCES
     "src/queue.cpp"

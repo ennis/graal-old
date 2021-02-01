@@ -77,14 +77,15 @@ swapchain_impl::swapchain_impl(device& device, range_2d framebuffer_size, vk::Su
 }
 
 swapchain_impl::~swapchain_impl() {
-    const auto vk_device = device_.get_vk_device();
+    const auto vk_device = device_.get_handle();
     vk_device.destroySwapchainKHR(swapchain_);
+    //device_.recycle_binary_semaphore()
 }
 
 //-----------------------------------------------------------------------------
 void swapchain_impl::resize(range_2d framebuffer_size, vk::SurfaceKHR surface) {
-    const auto phy = device_.get_vk_physical_device();
-    const auto vk_device = device_.get_vk_device();
+    const auto phy = device_.get_physical_device_handle();
+    const auto vk_device = device_.get_handle();
 
     vk::PhysicalDeviceSurfaceInfo2KHR surface_info{.surface = surface};
     const auto caps = phy.getSurfaceCapabilities2KHR(surface_info);
@@ -147,11 +148,11 @@ void swapchain_impl::resize(range_2d framebuffer_size, vk::SurfaceKHR surface) {
 }
 
 void swapchain_impl::acquire_next_image() {
-    auto vk_device = device_.get_vk_device();
+    auto vk_device = device_.get_handle();
 
     auto image_available = device_.create_binary_semaphore();
     auto [result, image_index] =
-            vk_device.acquireNextImageKHR(swapchain_, 1000000000, image_available, nullptr);
+            vk_device.acquireNextImageKHR(swapchain_, 1000000000, image_available.get(), nullptr);
     if (result == vk::Result::eTimeout) {
         throw std::runtime_error{"timeout waiting for next swapchain image"};
     }
@@ -159,12 +160,12 @@ void swapchain_impl::acquire_next_image() {
     current_image_ = image_index;
     image_ = images_[image_index];
     // reset resource state
-    state.layout = vk::ImageLayout::eUndefined;
-    state.clear_readers();
-    state.writer.serial = 0;
-    if (auto old_semaphore = std::exchange(state.wait_semaphore, image_available)) {
+    access.layout = vk::ImageLayout::eUndefined;
+    access.clear_readers();
+    access.writer.serial = 0;
+    if (auto old_semaphore = std::exchange(access.wait_semaphore, std::move(image_available))) {
         // FIXME is that correct? what if the semaphore is signalled?
-        device_.recycle_binary_semaphore(old_semaphore);
+        device_.recycle_binary_semaphore(std::move(old_semaphore));
     }
 }
 

@@ -10,56 +10,9 @@
 #include <memory>
 #include <vulkan/vulkan.hpp>
 
+#include <boost/intrusive_ptr.hpp>
+
 namespace graal::detail {
-
-    /// @brief Represents an "owned" handle to a vulkan object.
-    /// The object/scope that has a vk_handle owns the object and is responsible for its deletion.
-    /// The object is not automatically deleted, as it would need a backpointer to the device or instance.
-    /// Instead, the owner must call `release` and delete the object manually, or transfer ownership to another
-    /// object or function that takes charge of the deletion.
-    /// The destructor of `vk_handle` asserts if the handle is not nullptr.
-    template <typename T>
-    class vk_handle {
-    public:
-        constexpr vk_handle() noexcept : handle_{ nullptr } {}
-        constexpr vk_handle(std::nullptr_t) noexcept : handle_{ nullptr } {}
-        constexpr explicit vk_handle(T handle) noexcept : handle_{ handle } {}
-
-        ~vk_handle() noexcept { assert(!handle && "vulkan handle was not null"); }
-
-        vk_handle(const vk_handle<T>&) = delete;
-        vk_handle<T>& operator=(const vk_handle<T>&) = delete;
-
-        vk_handle(vk_handle<T>&&) noexcept = default;
-        vk_handle<T>& operator=(const vk_handle<T>&) noexcept = default;
-
-        [[nodiscard]] T release() noexcept {
-            auto h = handle_;
-            handle_ = nullptr;
-            return h;
-        }
-
-        [[nodiscard]] T get() const noexcept { return handle_; }
-        [[nodiscard]] explicit operator bool() const noexcept { return handle_ != nullptr; }
-        
-    
-    private:
-        T handle_;
-    };
-
-    template <typename T>
-    class vk_handle_vector
-    {
-    public:
-        using value_type = T;
-        
-        void push_back(vk_handle<T> );
-    
-        
-    private:
-        std::vector<T> handles_;
-    };
-
 
 /// @brief Flags common to all resource types.
 enum class allocation_flags {
@@ -77,9 +30,8 @@ struct allocation_requirements {
 };
 
 enum class resource_type {
-    swapchain_image,  // can cast to detail::swapchain_image_impl
-    image,  // can cast to detail::virtual_resource
-    buffer,  // can cast to detail::buffer_resource
+    image,
+    buffer,
 };
 
 class resource;
@@ -87,15 +39,22 @@ class image_resource;
 class buffer_resource;
 class virtual_resource;
 
-struct resource_last_access_info 
-{
+struct resource_access_tracking_info {
+    /// @brief Readers. There can be concurrent readers on different queues.
     std::array<serial_number, max_queues> readers{};
+    /// @brief Last writer.
     submission_number writer;
+    /// @brief Current image layout.
     vk::ImageLayout layout = vk::ImageLayout::eUndefined;
-    vk::Semaphore wait_semaphore;
+    /// @brief Flags that describe access types (writes) that have not yet been made available (caches that have not been flushed yet).
     vk::AccessFlags availability_mask{};
+    /// @brief Flags that describe access types (reads) that can see the last write to the resources (invalidated caches).
     vk::AccessFlags visibility_mask{};
+    /// @brief Stages accessing the resource.
     vk::PipelineStageFlags stages{};
+    /// @brief Binary semaphore guarding access to the resource. Only used by swapchain images.
+    // TODO who is responsible of recycling that if it's unconsumed?
+    handle<vk::Semaphore> wait_semaphore;
 
     [[nodiscard]] bool has_readers() const noexcept {
         for (auto r : readers) {
@@ -105,136 +64,119 @@ struct resource_last_access_info
     }
 
     void clear_readers() noexcept {
-        for (auto& r : readers) { r = 0; }
+        for (auto& r : readers) {
+            r = 0;
+        }
     }
 };
 
-
-
 /// @brief Base class for tracked resources.
-class resource 
-{
-    friend class queue_impl;
-
-public:
-    resource(resource_type type) : type_{type} {}
-
-    /// @brief If the resource is an image, returns the corresponding VkImage object.
-    /// @param device The device used to create the VkImage object, if it was not created yet.
-    /// @return nullptr if the resource is not an image.
-    image_resource* as_image();
-    const image_resource* as_image() const;
-
-    /// @brief If the resource is an image, returns the corresponding VkImage object.
-    /// @param device The device used to create the VkImage object, if it was not created yet.
-    /// @return nullptr if the resource is not an image.
-    buffer_resource* as_buffer();
-    const buffer_resource* as_buffer() const;
-
-    virtual_resource& as_virtual_resource();
-
-    [[nodiscard]] bool is_virtual() const noexcept {
-        return type_ == resource_type::image || type_ == resource_type::buffer;
+struct resource {
+    resource(resource_type type) : type{type} {
     }
 
-    [[nodiscard]] resource_type type() const noexcept {
-        return type_;
+    void add_ref() const noexcept {
+        ref_count.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    void release() const noexcept {
+        // relaxed should be sufficient since we're not using the counter for synchronization
+        ref_count.fetch_sub(1, std::memory_order_relaxed);
     }
 
     void add_user_ref() const noexcept {
-        user_ref_count_.fetch_add(1, std::memory_order_relaxed);
-    }
-
-    [[nodiscard]] uint32_t user_ref_count() const noexcept {
-        return user_ref_count_;
+        user_ref_count.fetch_add(1, std::memory_order_relaxed);
     }
 
     void release_user_ref() const noexcept {
         // relaxed should be sufficient since we're not using the counter for synchronization
-        user_ref_count_.fetch_sub(1, std::memory_order_relaxed);
+        user_ref_count.fetch_sub(1, std::memory_order_relaxed);
     }
 
-    [[nodiscard]] bool has_user_refs() const noexcept {
-        return user_ref_count_.load(std::memory_order_relaxed) != 0;
+    [[nodiscard]] vk::Image get_image_handle() const noexcept;
+    [[nodiscard]] vk::Buffer get_buffer_handle() const noexcept;
+
+    void bind_memory(
+            vk::Device vkd, VmaAllocation allocation, const VmaAllocationInfo& allocation_info) 
+    {
+        assert(!allocation);
+        assert(owned);
+
+        this->allocation = allocation;
+        this->allocation_info = allocation_info;
+
+        if (type == resource_type::image) {
+            vkBindImageMemory(
+                    vkd, get_image_handle(), allocation_info.deviceMemory, allocation_info.offset);
+        } else {
+            vkBindBufferMemory(
+                    vkd, get_buffer_handle(), allocation_info.deviceMemory, allocation_info.offset);
+        }
     }
 
-    [[nodiscard]] std::string_view name() const { return name_; }
-    void set_name(std::string name);
+    allocation_requirements get_allocation_requirements(vk::Device vkd) const
+    {
+        vk::MemoryRequirements mem_req;
+        if (type == resource_type::image) {
+            mem_req = vkd.getImageMemoryRequirements(get_image_handle());
+        } else {
+            mem_req = vkd.getBufferMemoryRequirements(get_buffer_handle());
+        }
+        return allocation_requirements{.memreq = mem_req,
+                .required_flags = mem_required_flags,
+                .preferred_flags = mem_preferred_flags};
+    }
 
-
-    bool allocated = false;  // set to true once bind_memory has been called successfully
-    resource_last_access_info state;
-private:
-    // For each resource, we maintain an "user reference count" which represents the number of
-    // user-facing objects (image<>, buffer<>, etc.) referencing the resource. This is used
-    // when submitting a batch to determine whether there exists user-facing references to the resource.
-    // If not, then the queue can perform optimizations knowing that the program will not use the resource in following batches.
-
-    mutable std::atomic_uint32_t user_ref_count_ = 0;
-    resource_type type_;
-    std::string name_;
+    bool owned = true;
+    vk::MemoryPropertyFlags mem_required_flags{};
+    vk::MemoryPropertyFlags mem_preferred_flags{};
+    VmaAllocation allocation = nullptr;  // nullptr if not allocated yet
+    VmaAllocationInfo allocation_info{};  // allocation info
+    resource_access_tracking_info access;
+    std::string name;
+    resource_type type;
+    size_t tmp_index = static_cast<size_t>(-1);
+    mutable std::atomic_uint32_t ref_count = 0;
+    mutable std::atomic_uint32_t user_ref_count = 0;
 };
 
-using resource_ptr = std::shared_ptr<resource>;
+void intrusive_ptr_add_ref(resource* r) {
+    r->add_ref();
+}
 
-/// @brief Base class for image resources.
-class image_resource : public resource {
-public:
-    image_resource(resource_type type, vk::Image image, image_format format) :
-        resource{type}, image_{image}, format_{format} {
+void intrusive_ptr_release(resource* r) {
+    r->release();
+}
+
+using resource_ptr = boost::intrusive_ptr<resource>;
+
+struct image_resource : resource {
+    image_resource() : resource{resource_type::image} {
     }
 
-    [[nodiscard]] vk::Image vk_image() const noexcept {
-        return image_;
-    }
-    [[nodiscard]] image_format format() const noexcept {
-        return format_;
-    }
-
-protected:
-    vk::Image image_ = nullptr;
-    image_format format_ = image_format::undefined;
+    vk::Image image = nullptr;
 };
 
-/// @brief Base class for buffer resources.
-class buffer_resource : public resource {
-public:
-    buffer_resource() :
-        resource{ resource_type::buffer }, buffer_{ nullptr }, byte_size_{ 0 } {
+using image_resource_ptr = boost::intrusive_ptr<image_resource>;
+
+struct buffer_resource : resource {
+    buffer_resource() : resource{resource_type::buffer} {
     }
 
-    buffer_resource(vk::Buffer buffer, size_t byte_size) :
-        resource{resource_type::buffer}, buffer_{buffer}, byte_size_{byte_size} {
-    }
-
-    [[nodiscard]] vk::Buffer vk_buffer() const noexcept {
-        return buffer_;
-    }
-    [[nodiscard]] size_t byte_size() const noexcept {
-        return byte_size_;
-    }
-
-protected:
-    vk::Buffer buffer_ = nullptr;
-    size_t byte_size_ = 0;
+    vk::Buffer buffer = nullptr;
 };
 
-/// @brief Base interface for resources whose memory is managed by the queue.
-class virtual_resource {
-    friend class queue_impl;
+using buffer_resource_ptr = boost::intrusive_ptr<buffer_resource>;
 
-public:
-    /// @brief Returns the memory requirements of the resource.
-    virtual allocation_requirements get_allocation_requirements(vk::Device device) = 0;
+inline vk::Image resource::get_image_handle() const noexcept {
+    return static_cast<const image_resource*>(this)->image;
+}
 
-    /// @brief
-    /// @param other
-    virtual void bind_memory(vk::Device device, VmaAllocation allocation,
-            const VmaAllocationInfo& allocation_info) = 0;
-};
+inline vk::Buffer resource::get_buffer_handle() const noexcept {
+    return static_cast<const buffer_resource*>(this)->buffer;
+}
 
-using virtual_resource_ptr = std::shared_ptr<virtual_resource>;
-
+/*
 /// @brief
 /// @tparam T
 template<typename T>
@@ -316,5 +258,6 @@ private:
 
     std::shared_ptr<T> ptr_;
 };
+*/
 
 }  // namespace graal::detail

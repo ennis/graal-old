@@ -3,6 +3,7 @@
 #include <iterator>
 #include <span>
 #include <algorithm>
+#include <optional>
 #include <utility>
 
 namespace graal::detail {
@@ -41,6 +42,22 @@ public:
         }
         return false;
     }
+
+    template <typename Pred>
+    std::optional<T> fetch_opt(Pred pred) {
+        for (size_t i = 0; i < free_list_.size(); ++i) {
+            if (pred(free_list_[i])) {
+                if (i != free_list_.size() - 1) {
+                    std::swap(free_list_[i], free_list_.back());
+                }
+                std::optional<T> result = std::move(free_list_.back());
+                free_list_.pop_back();
+                return std::move(result);
+            }
+        }
+        return std::nullopt;
+    }
+
 
     /// @brief Recycle one object
     /// @param obj

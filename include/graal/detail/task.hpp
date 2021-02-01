@@ -1,6 +1,7 @@
 #pragma once
 #include <graal/detail/sequence_number.hpp>
 #include <graal/detail/swapchain_impl.hpp>
+#include <graal/detail/vk_handle.hpp>
 #include <graal/queue_class.hpp>
 #include <graal/render_pass.hpp>
 
@@ -170,7 +171,8 @@ struct task {
         return d.type();
     }
 
-    bool needs_barrier() const noexcept {
+    /// Whether the task needs a pipeline barrier before executing.
+    [[nodiscard]] bool needs_barrier() const noexcept {
         return src_stage_mask != vk::PipelineStageFlagBits::eTopOfPipe
             || input_stage_mask != vk::PipelineStageFlagBits::eBottomOfPipe
             || !buffer_memory_barriers.empty()
@@ -182,29 +184,43 @@ struct task {
         vk::AccessFlags access_mask;
     };
 
+    /// @brief Name of the task.
     std::string name;
+    /// @brief Submission number of the task.
     submission_number snn;
-
-    size_t submit_batch_index = 0; 
-    size_t submit_batch_cb_index = 0;
-
+    /// @brief Index of the command buffer batch (assigned during scheduling).
+    size_t submit_batch_index = 0;
+    /// @brief Predecessors of the task (all tasks that must happen before this one).
     std::vector<size_t> preds;
+    /// @brief Successors of the task (all tasks for which this task is a predecessor).
     std::vector<size_t> succs;
-    bool async = false;
+    /// @brief List of accesses made by the task to resources.
+    /// FIXME Right now, this is used only for debugging purposes, and when allocating memory for the resources.
+    /// It probably could be removed.
     std::vector<resource_access> accesses;
 
+    /// @brief The list of image memory barriers that must be applied before executing the task.
     std::vector<vk::ImageMemoryBarrier> image_memory_barriers;
+    /// @brief The list of buffer memory barriers that must be applied before executing the task.
     std::vector<vk::BufferMemoryBarrier> buffer_memory_barriers;
 
-    // updated during scheduling
+    /// @brief Source stage mask for the pre-execution barrier.
     vk::PipelineStageFlags src_stage_mask{};
+    /// @brief Destination stage mask for the pre-execution barrier.
     vk::PipelineStageFlags input_stage_mask{};
+    /// @brief 
     vk::PipelineStageFlags output_stage_mask{};
+    /// @brief Whether a signal operation must be performed on the queue after the task.
     bool signal = false;
+    /// @brief Whether the task should wait on semaphores.
     bool wait = false;
-    std::vector<vk::Semaphore> input_wait_semaphores;
-    per_queue_wait_serials input_wait_serials{};
-    per_queue_wait_dst_stages input_wait_dst_stages{};
+    /// @brief If wait == true, the serials that the task should wait for (on the corresponding timelines).
+    per_queue_wait_serials wait_serials{};
+    /// @brief Corresponding destination stages for each wait defined by wait_serials.
+    per_queue_wait_dst_stages wait_dst_stages{};
+    /// @brief If wait == true, the binary semaphores that the task should wait on,
+    /// in addition to the waits specified by wait_serials.
+    handle_vector<vk::Semaphore> wait_semaphores;
 
     // data specific to the task type
     details d;

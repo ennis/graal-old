@@ -601,6 +601,26 @@ int main() {
                 // - introduce proper "swapchain image" resources
                 // - end the current batch before calling "acquire_next_image" 
                 //      - reasonable, as a present operation usually coincides with the "end of the frame".
+                // - provide access to vk objects only through accessors
+                //
+                // FIXME #2: accessing resources via `image<T>` and `buffer<T>` objects in command callbacks
+                // adds a "user" reference count, and prevents the resource from being optimized!
+                // And it's tempting to accidentally introduce a user reference in the command callback: for instance,
+                // accessing properties `image<T>::width()` in the command callback will add a user ref and prevent aliasing!
+                // Related problem: `resource.discard()` when there's a user reference in the command callback will crash.
+                // 
+                // Solutions:
+                // - get VkImage manually in the handler
+                //      - not fool-proof
+                // - accessors
+                // - don't count user references to determine if the resource can be used; instead,
+                //    let the user say explicitly that the resource will live only for the next batch (via a flag)
+                //      - the user can still use the resource in the next batch, but it will point to another concrete resource
+                //       (that's equivalent to the resource contents having been "discarded")
+                //      - for mapped resources, the mapped pointer becomes invalid
+                //   
+                // Part of the solution is that the user should not reference the resource in the command callback.
+                // Only use accessors then?
 
                 vk::Image swapchain_image = swapchain.current_image();
 
