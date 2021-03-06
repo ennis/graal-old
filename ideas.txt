@@ -1,0 +1,506 @@
+ {namespace detail {
+
+class task_graph_impl;
+
+// represents a task
+// - dependencies
+// - status (scheduled | finished | error)
+// - error message (optional)
+class task;
+using task_id = int;
+
+/// @brief A possibly shared image resource (wrapper around an opengl texture).
+struct image_resource;
+
+// - parent graph (optional)
+// - pointer to image resource (possibly shared)
+// - list of revisions
+class image_impl;
+
+} // namespace detail
+
+class evaluation_error;
+class invalid_operation;
+
+/// Execution graph
+class task_graph;
+
+/// Represents a simple, single value of type T
+template <typename T> class value;
+
+/// Represents a buffer resource
+// size [specified or unspecified]
+// residency
+template <typename T> class buffer;
+
+/// When the data is accessible.
+enum class visibility {
+  evaluation_only,     ///< Only accessible during evaluation
+  evaluation_and_host, ///< Enable host access
+};
+
+using image_1d = image<1>;
+using image_2d = image<2>;
+using image_3d = image<3>;
+
+enum class access_mode {
+  read_only,
+  write_only,
+  read_write,
+};
+
+/// Abstraction for an access to a resource
+// residency: device | host
+// resource: value | buffer | image
+template <typename Resource, access_mode AccessMode> class accessor;
+
+// for graphics:
+// - buffers: vertex_buffer | index_buffer | uniform_buffer | storage_buffer |
+// host_read | host_write
+// - images: sampled_image | storage_image | framebuffer_attachment | upload |
+// readback Image can be texture or renderbuffer underneath (that's abstracted
+// depending on usage). Create multiple accessors if the resource is accessed in
+// multiple ways.
+//
+// Under the hood, accessors can do "complicated" stuff, like:
+// - for upload, allocate or use a staging buffer
+// - for readback, use a PBO + fence
+// - for sampled images: also set the sampling information
+//
+//
+//  type of access | read/write
+//  vertex_buffer  | RO
+//  index_buffer   | RO
+//  uniform_buffer | RO
+//  storage_buffer | RO/RW
+//  host_write
+//
+// constructor forms:
+// { buf, vertex_buffer (mode+target) }           => <buffer<>,
+// target::vertex_buffer, access_mode::read_only> { buf, index_buffer
+// (mode+target) }          => <buffer<>, target::index_buffer,
+// access_mode::read_only> { buf, uniform_buffer (mode+target) }
+// => <buffer<>, target::uniform_buffer, access_mode::read_only> { buf,
+// transform_feedback (mode+target) }           => <buffer<>,
+// target::transform_feedback, access_mode::write_only>
+
+// { buf, storage_buffer }            => <buffer<>,
+// target::storage_buffer, access_mode::read_only> { buf, storage_buffer,
+// read_only }       => <buffer<>, target::storage_buffer,
+// access_mode::read_only> { buf, storage_buffer, write_only }      =>
+// <buffer<>, target::storage_buffer, access_mode::write_only> { buf,
+// storage_buffer, read_write }      => <buffer<>, target::storage_buffer,
+// access_mode::read_write>
+
+// { img, sampled_image }             =>
+// <image<>,target::sampled_image, access_mode::read_only> { img, storage_image
+// }          => <image<>,target::sampled_image,
+// access_mode::read_only> { img, storage_image, read_only }    =>
+// <image<>,target::sampled_image, access_mode::read_only> { img, storage_image,
+// read_write }   => <image<>,target::sampled_image,
+// access_mode::read_write> { img, storage_image, write_only }      =>
+// <image<>,target::sampled_image, access_mode::write_only>
+
+/// Provides a way to schedule commands.
+class scheduler;
+
+} // namespace flair
+
+    // create an execution graph
+    // a new execution graph should be created for every evaluation
+    task_graph graph;
+
+    // create an image resource
+    image_2d img{image_format::r16g16_sfloat, {1280, 720}};
+    // create a virtual image resource: it can only be read within a queue operation
+    image_2d vimg { image_format::r16g16_sfloat, virtual_image };
+
+
+    buffer<Vertex> mesh_vtx_buffer{ 6 };
+
+    // schedule a task
+    graph.schedule([&](scheduler &sched) {
+
+        // use mesh_vtx as an upload target
+        // will automatically enable a `data() -> T*` function to write data
+        accessor vbo_upload{mesh_vtx, host_write, sched};
+
+        // use mesh_vtx as a vertex buffer
+        accessor vbo_use{mesh_vtx, vertex_buffer, sched};
+
+      // request write access to the image
+      accessor img_access{img, write_access, sched};
+
+      // accessor<image<N>, access_mode::render_target
+      accessor rt{img, framebuffer_attachment, sched};
+
+      accessor cam_ubo{cam_buf, uniform_buffer, sched};
+
+      accessor img{img, transfer_destination, sched};
+
+      // schedule a simple task
+      sched.gl_commands([=] {
+        // fetch the OpenGL texture object
+        img_access.get_texture_object();
+
+        // do something to the texture via the current OpenGL context
+      });
+    });
+
+    // schedule another task
+    graph.schedule([&](scheduler &sched) {
+      // request read access to img
+      // this creates a dependency between the previous task that writes to img
+      // and this task you can ask for device (GPU) or host access (CPU)
+      // depending on how the node is implemented.
+      // 
+
+      accessor img_access{img, sampled_image, sched};
+
+      // request access to img as a framebuffer attachment
+      // if the resource is virtual AND access is write-only (discard)
+      // then 
+
+      // uniform buffer
+      accessor {buf, uniform_buffer, sched};
+      
+      // storage buffer
+      accessor {buf, storage_buffer, sched};
+      accessor {buf, storage_buffer, read_only, sched};
+      accessor {buf, storage_buffer, read_write, sched};
+      accessor {buf, storage_buffer, write_only, sched};
+
+      // vertex/index buffer
+      accessor {buf, vertex_buffer, sched};
+      accessor {buf, index_buffer, sched};
+
+      // transfer
+      accessor {buf, transfer_source, sched };
+      accessor {buf, transfer_destination, sched };
+      accessor {img, transfer_source, sched };       // pixel transfer source
+      accessor {img, transfer_destination, sched };  // pixel transfer destination
+
+      // sampled_image
+      accessor {img, sampled_image, sched };
+
+      // storage_image
+      accessor {img, storage_image, sched };
+      accessor {img, storage_image, read_only, sched };
+      accessor {img, storage_image, read_write, sched };
+      accessor {img, storage_image, write_only, sched };
+
+      // framebuffer attachment
+      accessor {img, framebuffer_attachment, clear { 0.0, 0.0, 0.0, 1.0 }, sched };
+      accessor {img, framebuffer_attachment, discard, sched };
+      accessor {img, framebuffer_attachment, keep, sched };
+      accessor {img, framebuffer_attachment, sched }; // default is keep
+
+
+      // overloads:
+      // framebuffer_attachment_tag_t, framebuffer_load_op_clear_t
+      // framebuffer_attachment_tag_t, framebuffer_load_op_discard_t
+      // framebuffer_attachment_tag_t, framebuffer_load_op_keep_t
+      // framebuffer_attachment_tag_t 
+      // 
+
+
+      // schedule a simple task
+      sched.compute([=] {
+        // fetch the OpenGL texture object
+        img_access.get_texture_object();
+
+        // do something with the texture via the current OpenGL context
+        // ...
+      });
+    });
+        
+
+    // trying to access an image here will launch the graph and block until
+    // everything has finished computing
+
+    // I think that if get_texture_object is called, 
+    // and if the texture is fully specified, 
+    // then it should *always* create and return 
+    // a texture object, even if it is bound to a graph. 
+    // It could be a way to "force" materialization of a texture.
+
+    // Another point of view: this can be "surprising", as calling get_texture_object() at
+    // the wrong place would prevent optimization
+    // Instead, put *in the type* whether it's possible to externally access the texture or not.
+    GLuint tex_obj = img.get_texture_object();
+  }
+
+
+  // in this API, the "resources" (images, etc.) are specified externally
+  // - image
+  // - buffer<T>
+  // - value<T>
+  //
+  // images can be "virtual", which means that they can't be accessed outside of
+  // a task "virtual" images are resolved to concrete images by the evaluator
+
+  // problem:
+  // - a function that produces an image from an input should return an image
+  // object
+  // - however, it is up to the caller to decide whether this would be a
+  // "virtual" image
+  //   or a concrete image accessible outside evaluation
+  // This means that the specification of an image is "split" between two parts:
+  // - the "node", that determines the width, height, format of the image
+  // depending on the input
+  // - the client, that defines where the image is going to live
+
+  // image objects can have "unspecified" properties: width, height, format,
+  // residency
+
+  // rebuilding the graph for every evaluation?
+  // - already done right now
+
+  image img_input;
+
+  // virtual_image v_img;
+
+  string_value str;
+
+  load_image("test.exr", v_img);
+
+// the delayed image specification is purely an ergonomic decision
+// this is because we expect to support functions of the form:
+//
+//    void filter(const image& input, image& output);
+//
+// where the filter (the callee) decides the size of the image,
+// but the *caller* decides other properties of the image, such as its required
+// access (evaluation only, or externally visible)
+
+// this causes issues:
+// - should the image be fully specified on first access?
+//    Yes (and that's different from )
+
+
+external access : statically 
+dimensions      : statically
+size            : before access, no default
+format          : before access, no default
+multisampling   : before access, default is single sample
+mipmaps         : before access, default is one mipmap
+
+
+// 
+// caller must compute the number of mipmaps 
+// but does not need to specify OutputExt when calling
+template<int D, bool InputExt, bool OutputExt>
+build_mipmaps(image<D,InputExt> & input, image<D,OutputExt>& output)
+
+// alt.
+// caller must specify external access for the output image,
+// but does not need to compute the number of mipmaps
+build_mipmaps<OutputExt, InputExt>(image<D>& input) -> image<D,OutputExt>()
+
+// what about a filter that supports multiple output formats?
+// - either pass it as a parameter
+// - or use the provided 
+
+
+
+template <int D, typename InputExt, typename OutputExt
+build_mipmaps(image<D,InputExt>& input, image<D,OutputExt>& output);
+
+// callee-specified:
+// size
+// format
+// multisample
+
+
+  image in { ... };
+
+  image_2d out { virtual_image };
+
+  build_mipmaps(in, out);
+
+
+image: 
+
+format array dimensions mipmaps multisample(n) virtual_image sparse_storage
+// -> too many combinations (2**7 = 128 constructors?)
+// keep all params that can be used to deduce the image static type, and put the rest in an unordered property list:
+
+array dimensions virtual_image 
+  properties:
+    - mipmaps
+    - multisample
+    - sparse_storage 
+
+// issue: multiply-defined properties of the same type?
+
+image in { array, range{512,512,512} };   // image 2D array, 512x512x512
+image in { range{512, 512, 512} };        // image 3D, 512x512x512
+image in { array, range{512,512}, virtual_image }; // virtual image 1D array, 512x512
+image in { array, range{512,512}, mipmaps{0}, virtual_image }; // virtual image 1D array, 512x512
+image in { array, range{512,512}, auto_mipmaps, virtual_image }; // virtual image 1D array, 512x512
+image in { range{512,512}, auto_mipmaps, multisample{8}, virtual_image }; // virtual image 1D array, 512x512
+image_2d in { multisample{8}, virtual_image }; // virtual image 1D array, 512x512
+
+
+image_2d_array { image_format::r8g8b8a8, range{512,512,512} }
+image_2d_array { image_format::r8g8b8a8, range{512,512,512} }
+
+image in { image_format::r8g8b8a8, range{512,512,512}, virtual_image, 
+
+          image_properties { auto_mipmaps, multisample{8}, sparse }};
+
+          image in { image_format::r8g8b8a8, }
+
+format
+format array 
+format array dimensions
+format array dimensions multisample
+format array dimensions multisample virtual_image
+
+       array
+format array 
+format array dimensions
+format array dimensions multisample
+format array dimensions multisample virtual_image
+
+             dimensions
+       array dimensions 
+format array dimensions
+format array dimensions multisample
+format array dimensions multisample virtual_image
+
+                        multisample
+             dimensions multisample
+       array dimensions multisample
+format array dimensions multisample
+format array dimensions multisample virtual_image
+
+
+                                    virtual_image
+                        multisample virtual_image
+             dimensions multisample virtual_image
+       array dimensions multisample virtual_image
+format array dimensions multisample virtual_image
+
+32 combinations
+
+============================
+
+Accessing buffers and textures directly outside of the queue?
+- upload/mapping/readback
+- what about coherence with uploaded data?
+- i.e. visibility of uploads w.r.t. tasks in the queue
+
+
+  q.schedule("T1", [] { READ(buffer) });
+  // "buffer" somehow added to the list of resources for the batch
+  // OR `buffer` gets a sync object (fence, sync?)
+  // If a buffer has a sync object, then must wait on the sync (this might flush the queue)
+
+queue_sync = (queue, batch_index), set by the accessor during batch creation
+queue_sync.wait() -> queue.ensure_batch_finished(batch_index)
+
+
+In SYCL: events
+Waiting for a queue event triggers a flush
+A resource can have multiple events (one for each queue?)
+
+
+  buffer.upload(...); 
+  // `buffer` has accesses in the current batch, so terminate it AND SYNCHRONIZE
+
+
+  buffer.discard(); 
+  // could also drop the current buffer and allocate a new one
+  // However, OpenGL can do it already, using buffer re-specification (glInvalidateBufferData/glInvalidateTexImage)
+  // Must be pushed into the queue as a command
+
+
+What does T1 sees for the contents of buffer?
+=> buffer.upload() forces a pipeline flush IF there are pending references.
+
+https://dcgi.fel.cvut.cz/home/sloup/pages/theses/GalajdaRoman2020.pdf
+
+============================
+
+Re-use of virtual images?
+Let's say that T1 and T2 access resources V1 and V2, both mapped to concrete image R1.
+*** Don't forget to invalidate the contents of R1 so that we don't introduce a false dependency between T1 and T2.
+*** When doing so, the driver may internally orphan the memory of R1 and re-bind it to a new image so that the two tasks can run in parallel, 
+    which kind of defeats the purpose of reducing top memory usage.
+*** Don't alias resources that may be accessed in parallel! 
+
+Basically, conflicting goals:
+- reducing top memory usage
+- increasing parallel execution
+
+In the inteference graph:
+- identify tasks that can potentially be run in parallel
+- how?
+- scheduling problem?
+
+============================
+
+**Consider vulkan**
+=> prototype the external API with OpenGL first
+
+
+============================
+
+virtual resources could be avoided by manually discarding the resource once we don't care about its contents anymore
+this requires the client to know when that happens 
+-> should we let the user of the library determine the lifetime of resources?
+-> no, that's what "virtual resources" are for
+
+virtual resources: lifetime determined by accesses
+concrete resources: lifetime determined by the user
+
+- OpenGL buffer renaming
+- client-side renaming
+- resource memory aliasing
+
+concrete resource:
+- discard is added to the command queue
+  - for OpenGL, let the driver do resource renaming
+  - for Vulkan, rebind to a new resource, add the discarded one to the queue, release when done
+
+virtual resource:
+- discard creates a new virtual resource 
+
+=> unify virtual and concrete resources somehow?
+  => if possible
+
+
+  virtual_image i0;
+
+  q.schedule([] { WRITE(i0); });
+
+  i0.read();    
+  
+  // all tasks in queue are flushed (which will allocate concrete resources), and wait for the result to be ready
+  
+resource:
+ - batch_resource_id
+ - discarded (externally reachable)
+ -> concrete resource (aliased memory block)
+
+image_impl
+ -> shared_ptr<resource>
+if impl is concrete, then the pointer to the resource will be the same; the concrete resource is created immediately
+  - the OpenGL driver can still perform buffer renaming under the hood
+if impl is virtual, then the impl can create a new resource, but delay the allocation of this resource until queue is flushed
+
+* unify impls of externally-accessible and non-externally accessible resources
+* not in the type anymore (flag passed on construction)
+* all resources externally-accessible
+* for virtual resources, the object returned by get_gl_object() might not be the same on each call
+* all image/buffers have a pointer to an underlying resource object
+* this resource object can be allocated if concrete, or allocation can be delayed if virtual 
+
+============================
+
+
+resources VS virtual resources
+
+virtual resources cannot be accessed outside tasks
+have an additional degree of indirection
