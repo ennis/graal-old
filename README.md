@@ -1,3 +1,5 @@
+Edit: development of this library is suspended indefinitely, but a rust version is in the works. This is probably not robust enough to be used as-is, but the automatic synchronization algorithm could be salvaged for your own projects.
+
 # GRAAL 
 
 This repository contains the source code of graal, a modern ~~C++17~~ C++20 wrapper over ~~OpenGL~~ Vulkan that makes it easy to optimize resource allocation in complex rendering pipelines.
